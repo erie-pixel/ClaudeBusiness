@@ -1,0 +1,16 @@
+{
+  "name": "claudebusiness",
+  "private": true,
+  "scripts": {
+    "dev:cogni": "pnpm --filter cogni-market dev",
+    "dev:game": "pnpm --filter ai-boardgame dev",
+    "build:cogni": "pnpm --filter cogni-market build",
+    "build:game": "pnpm --filter ai-boardgame build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}
