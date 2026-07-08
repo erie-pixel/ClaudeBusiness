@@ -114,6 +114,13 @@ function createWindow() {
   win.loadFile(path.join(__dirname, '../renderer/index.html'))
   win.once('ready-to-show', () => win?.showInactive())
   win.webContents.on('did-finish-load', pushSettings)
+  // 안전망: transparent 창은 환경에 따라 ready-to-show가 오지 않을 수 있다
+  // (그러면 캐릭터가 영영 표시되지 않음) — 1.5초 후에도 안 보이면 강제 표시
+  setTimeout(() => {
+    if (win && !win.isDestroyed() && !win.isVisible() && !manualHidden && !fullscreenHidden) {
+      win.showInactive()
+    }
+  }, 1500)
 
   // forward 옵션의 mousemove 전달은 플랫폼별 편차가 있어(특히 통과 모드 전환 직후),
   // 커서 좌표는 메인 프로세스 폴링으로 일원화해서 렌더러에 밀어준다.
