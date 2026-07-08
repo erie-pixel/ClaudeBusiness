@@ -1,75 +1,82 @@
 @echo off
-rem Desktop Companion launcher - double-click to install & run (no PowerShell needed)
-rem If something fails, this window STAYS OPEN and writes run-log.txt - screenshot either one.
+rem Desktop Companion launcher v3 - double-click to install & run.
+rem EVERYTHING (npm install/start output) is written to run-log.txt for debugging.
 setlocal EnableExtensions
 title Desktop Companion Launcher
 cd /d "%~dp0"
 
 set LOG=run-log.txt
-echo ==== Desktop Companion launcher ==== > "%LOG%"
+echo ==== Desktop Companion launcher v3 ==== > "%LOG%"
 echo folder: %CD% >> "%LOG%"
 
 echo.
 echo [1/4] Checking Node.js...
 where node >nul 2>nul
 if errorlevel 1 (
-  echo   Node.js not found. Trying automatic install via winget...
   echo   node: NOT FOUND, trying winget >> "%LOG%"
+  echo   Node.js not found. Trying automatic install via winget...
   winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements
   echo.
-  echo   ============================================================
-  echo   If the install above succeeded:
-  echo     CLOSE this window and double-click run.bat ONE MORE TIME.
-  echo   If it failed:
-  echo     Install Node.js LTS from https://nodejs.org then run again.
-  echo   ============================================================
+  echo   If the install above succeeded: CLOSE this window and run run.bat AGAIN.
+  echo   If it failed: install Node.js LTS from https://nodejs.org then run again.
   pause
   exit /b 0
 )
 for /f "delims=" %%v in ('node -v 2^>nul') do set NODEV=%%v
 echo   Node %NODEV% OK
-echo   node: %NODEV% >> "%LOG%"
+echo node: %NODEV% >> "%LOG%"
 
 echo [2/4] Checking npm...
 call npm -v >> "%LOG%" 2>&1
 if errorlevel 1 (
+  echo npm: FAILED >> "%LOG%"
   echo   npm is not working. Please reinstall Node.js LTS from https://nodejs.org
-  echo   npm: FAILED >> "%LOG%"
-  pause
-  exit /b 1
+  goto :fail
 )
 echo   npm OK
 
-echo [3/4] Installing dependencies (first run can take a few minutes)...
+echo [3/4] Installing dependencies...
+echo step3: install >> "%LOG%"
 if not exist "node_modules\electron\dist\electron.exe" (
-  call npm install --no-audit --no-fund
+  echo   First run: this takes a FEW MINUTES with no output here.
+  echo   Progress is being written to run-log.txt - do not close this window.
+  call npm install --no-audit --no-fund >> "%LOG%" 2>&1
   if errorlevel 1 (
-    echo   npm install FAILED >> "%LOG%"
-    echo.
-    echo   npm install FAILED. Common causes: no internet, antivirus, VPN/proxy.
-    echo   Fix the connection, DELETE the node_modules folder, and run again.
-    pause
-    exit /b 1
+    echo step3: npm install FAILED >> "%LOG%"
+    echo   npm install FAILED. Common causes: no internet, antivirus, VPN/proxy,
+    echo   or OneDrive locking files (move this folder to C:\officebud and retry).
+    goto :fail
   )
 )
 if not exist "node_modules\electron\dist\electron.exe" (
-  echo   electron.exe missing after install >> "%LOG%"
-  echo.
-  echo   Electron did not download completely (often blocked by antivirus/proxy).
+  echo step3: electron.exe still missing >> "%LOG%"
+  echo   Electron did not download completely (antivirus/proxy/OneDrive?).
   echo   DELETE the node_modules folder and double-click run.bat again.
-  pause
-  exit /b 1
+  goto :fail
 )
 echo   dependencies OK
+echo step3: done >> "%LOG%"
 
-echo [4/4] Building and starting... a small pixel character will appear on your desktop.
-echo   (This window must stay open while the character is running.)
-echo   To quit: right-click the character ^> quit, or the tray heart icon ^> quit.
-call npm start
+echo [4/4] Starting... a small pixel character will appear on your desktop.
+echo   (Keep this window open. Quit: right-click character or tray heart icon.)
+echo step4: npm start >> "%LOG%"
+call npm start >> "%LOG%" 2>&1
 set EXITCODE=%errorlevel%
-echo app exited with code %EXITCODE% >> "%LOG%"
+echo step4: exited %EXITCODE% >> "%LOG%"
 echo.
-echo App exited (code %EXITCODE%).
-echo If the character never appeared or this happened instantly,
-echo screenshot THIS window (or send run-log.txt) so it can be fixed.
+echo App exited (code %EXITCODE%). Last log lines:
+echo ------------------------------------------------------------
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -Tail 25 '%LOG%'" 2>nul
+echo ------------------------------------------------------------
+echo If something went wrong, send run-log.txt (in this folder) or a screenshot.
 pause
+exit /b %EXITCODE%
+
+:fail
+echo.
+echo ------------------------------------------------------------
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -Tail 25 '%LOG%'" 2>nul
+echo ------------------------------------------------------------
+echo FAILED. Send run-log.txt (in this folder) or a screenshot of this window.
+pause
+exit /b 1
