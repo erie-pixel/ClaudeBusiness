@@ -45,11 +45,52 @@
         background: #454a66;
         margin: 4px 2px;
       }
+      #menu .stats {
+        padding: 6px 10px 2px;
+      }
+      #menu .stat {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 4px;
+        font-size: 11px;
+        color: #aab0cc;
+      }
+      #menu .stat span {
+        width: 32px;
+      }
+      #menu .bar {
+        flex: 1;
+        height: 8px;
+        background: #10121b;
+        border: 1px solid #454a66;
+      }
+      #menu .fill {
+        height: 100%;
+      }
+      #bubble {
+        display: none;
+        position: absolute;
+        transform: translate(-50%, -100%);
+        max-width: 220px;
+        background: #fdfdf6;
+        color: #22242f;
+        border: 3px solid #22242f;
+        box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.35);
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        font-weight: bold;
+        padding: 5px 9px;
+        white-space: nowrap;
+        pointer-events: none;
+        image-rendering: pixelated;
+      }
     </style>
   </head>
   <body>
     <canvas id="stage"></canvas>
     <div id="menu"></div>
+    <div id="bubble"></div>
     <script src="./renderer.js"></script>
   </body>
 </html>

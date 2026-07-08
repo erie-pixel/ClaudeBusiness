@@ -9,6 +9,8 @@ export type StateName =
   | 'exhausted'
   | 'nap'
   | 'stay'
+  | 'held' // 마우스로 집어든 상태 — 위치는 렌더러가 커서로 직접 제어
+  | 'watch' // 활성 창 쳐다보기
 
 export interface Bounds {
   minX: number
@@ -40,6 +42,19 @@ export interface CharacterConfig {
   /** 배회 시 멈춰 쉬는 시간 범위 (s) */
   wanderPauseMin: number
   wanderPauseMax: number
+  // ---- 스탯 (0~100) ----
+  hungerRate: number // 배고픔 증가 /s
+  hungerFeedRelief: number // 간식 1회당 감소량
+  hungryAt: number // 이 이상이면 배고픔 호소
+  sleepinessRateDay: number // 졸림 증가 /s (낮)
+  sleepinessRateNight: number // 졸림 증가 /s (밤 22~06시)
+  sleepinessNapRelief: number // 낮잠 중 감소 /s
+  autoNapAt: number // 이 이상이면 스스로 낮잠
+  napWakeAt: number // 낮잠 중 이 이하로 내려가면 기상
+  // ---- 창 쳐다보기 ----
+  watchChance: number // 활성 창 전환 시 쳐다보러 갈 확률
+  watchTimeMin: number // 구경 시간 (s)
+  watchTimeMax: number
 }
 
 export const DEFAULT_CONFIG: CharacterConfig = {
@@ -54,41 +69,69 @@ export const DEFAULT_CONFIG: CharacterConfig = {
   exhaustedRecoverAt: 35,
   wanderPauseMin: 2,
   wanderPauseMax: 8,
+  hungerRate: 100 / (3.5 * 3600), // ~3.5시간에 만배고픔
+  hungerFeedRelief: 70,
+  hungryAt: 80,
+  sleepinessRateDay: 100 / (5 * 3600),
+  sleepinessRateNight: 100 / (2 * 3600),
+  sleepinessNapRelief: 0.9,
+  autoNapAt: 85,
+  napWakeAt: 10,
+  watchChance: 0.5,
+  watchTimeMin: 6,
+  watchTimeMax: 14,
 }
 
 /** 렌더러가 애니메이션을 고르는 데 쓰는 표시용 상태 */
-export type Pose = 'idle' | 'walk' | 'run' | 'pant' | 'sleep'
+export type Pose = 'idle' | 'walk' | 'run' | 'pant' | 'sleep' | 'held'
 
 export class Character {
   x: number
   y: number
   facing: 1 | -1 = 1
   state: StateName = 'wander'
-  stamina: number
   running = false
   moving = false
-  /** 하트 이모트 잔여 시간 (쓰다듬기) */
+  /** 하트 이모트 잔여 시간 (쓰다듬기/간식) */
   emoteTimer = 0
+  /** 말풍선 대사 큐 — 렌더러가 shift()로 꺼내 표시 */
+  messages: string[] = []
+
+  // 스탯 (0~100)
+  stamina: number
+  hunger = 20
+  sleepiness = 20
+  mood = 70
 
   private cfg: CharacterConfig
   private rng: () => number
+  private getHour: () => number
   private wanderTarget: { x: number; y: number } | null = null
   private pauseTimer = 0
+  private hungrySayCooldown = 0
+  private watchTarget: { x: number; y: number } | null = null
+  private watchTimer = 0
 
   constructor(
     x: number,
     y: number,
     cfg: CharacterConfig = DEFAULT_CONFIG,
     rng: () => number = Math.random,
+    getHour: () => number = () => new Date().getHours(),
   ) {
     this.x = x
     this.y = y
     this.cfg = cfg
     this.rng = rng
+    this.getHour = getHour
     this.stamina = cfg.staminaMax
   }
 
-  // ---- 사용자 명령 (우클릭 메뉴) — 항상 최우선 ----
+  private say(text: string) {
+    if (this.messages.length < 3) this.messages.push(text)
+  }
+
+  // ---- 사용자 명령 (우클릭 메뉴 / 마우스) — 항상 최우선 ----
 
   commandFollow() {
     this.state = 'follow'
@@ -102,17 +145,67 @@ export class Character {
   commandStay() {
     this.state = 'stay'
   }
+  /** 간식 주기 */
+  feed() {
+    this.hunger = Math.max(0, this.hunger - this.cfg.hungerFeedRelief)
+    this.mood = Math.min(100, this.mood + 10)
+    this.emoteTimer = 1.6
+    this.say('냠냠!')
+    if (this.state === 'nap') this.state = 'idle' // 간식 냄새에 깬다
+  }
   /** 좌클릭: 자면 깨우고, 깨어 있으면 쓰다듬기 */
   poke() {
+    if (this.state === 'held') return
     if (this.state === 'nap') {
       this.state = 'idle'
+      this.pauseTimer = 1
     } else {
       this.emoteTimer = 1.6
+      this.mood = Math.min(100, this.mood + 4)
+    }
+  }
+
+  /** 마우스로 집어들기 (머리를 잡힘) */
+  grab() {
+    if (this.state !== 'held') {
+      this.state = 'held'
+      this.say('으앗?!')
+    }
+  }
+  /** 내려놓기 */
+  release() {
+    if (this.state === 'held') {
+      this.state = 'idle'
+      this.pauseTimer = 1.2 // 잠깐 어리둥절
+      this.say('휴…')
+    }
+  }
+  /** 집힌 동안 렌더러가 위치를 직접 지정 */
+  heldMoveTo(x: number, y: number, bounds: Bounds) {
+    this.x = Math.max(bounds.minX, Math.min(bounds.maxX, x))
+    this.y = Math.max(bounds.minY, Math.min(bounds.maxY, y))
+  }
+
+  /** 활성 창이 바뀌었다는 알림 → 확률적으로 구경하러 감 */
+  notifyActiveWindow(point: { x: number; y: number }) {
+    if (this.state === 'watch') {
+      this.watchTarget = point // 이미 구경 중이면 새 창으로 관심 이동
+      return
+    }
+    if (this.state !== 'wander' && this.state !== 'idle') return
+    if (this.rng() < this.cfg.watchChance) {
+      this.state = 'watch'
+      this.watchTarget = point
+      this.watchTimer =
+        this.cfg.watchTimeMin + this.rng() * (this.cfg.watchTimeMax - this.cfg.watchTimeMin)
+      if (this.rng() < 0.3) this.say('오~ 뭐 해?')
     }
   }
 
   get pose(): Pose {
     switch (this.state) {
+      case 'held':
+        return 'held'
       case 'nap':
         return 'sleep'
       case 'exhausted':
@@ -120,6 +213,7 @@ export class Character {
       case 'follow':
         return this.moving ? (this.running ? 'run' : 'walk') : 'idle'
       case 'wander':
+      case 'watch':
         return this.moving ? 'walk' : 'idle'
       default:
         return 'idle'
@@ -131,7 +225,11 @@ export class Character {
     this.moving = false
     this.running = false
 
+    this.updateStats(dt)
+
     switch (this.state) {
+      case 'held':
+        return // 위치는 렌더러가 제어, 이동/전이 없음
       case 'follow':
         this.updateFollow(dt, world)
         break
@@ -142,6 +240,14 @@ export class Character {
         break
       case 'nap':
         this.stamina = Math.min(this.cfg.staminaMax, this.stamina + this.cfg.staminaNapRegen * dt)
+        if (this.sleepiness <= this.cfg.napWakeAt) {
+          this.state = 'idle'
+          this.pauseTimer = 2
+        }
+        break
+      case 'watch':
+        this.updateWatch(dt, world)
+        this.regen(dt)
         break
       case 'wander':
         this.updateWander(dt, world)
@@ -160,9 +266,41 @@ export class Character {
         break
     }
 
+    // 스탯 임계값 자율 전이 (사용자 명령 상태에서는 발동 안 함)
+    if (
+      this.sleepiness >= this.cfg.autoNapAt &&
+      (this.state === 'wander' || this.state === 'idle')
+    ) {
+      this.state = 'nap'
+      this.say('졸려…')
+    }
+
     const b = world.bounds
     this.x = Math.max(b.minX, Math.min(b.maxX, this.x))
     this.y = Math.max(b.minY, Math.min(b.maxY, this.y))
+  }
+
+  private updateStats(dt: number) {
+    this.hunger = Math.min(100, this.hunger + this.cfg.hungerRate * dt)
+    const hour = this.getHour()
+    const night = hour >= 22 || hour < 6
+    if (this.state === 'nap') {
+      this.sleepiness = Math.max(0, this.sleepiness - this.cfg.sleepinessNapRelief * dt)
+    } else {
+      this.sleepiness = Math.min(
+        100,
+        this.sleepiness + (night ? this.cfg.sleepinessRateNight : this.cfg.sleepinessRateDay) * dt,
+      )
+    }
+    // 배고픔이 심하면 기분이 서서히 나빠진다
+    if (this.hunger >= this.cfg.hungryAt) {
+      this.mood = Math.max(0, this.mood - 0.02 * dt * 60)
+      this.hungrySayCooldown -= dt
+      if (this.hungrySayCooldown <= 0 && this.state !== 'nap' && this.state !== 'held') {
+        this.say('배고파…')
+        this.hungrySayCooldown = 45
+      }
+    }
   }
 
   private regen(dt: number) {
@@ -198,6 +336,7 @@ export class Character {
       if (this.stamina <= 0) {
         this.stamina = 0
         this.state = 'exhausted'
+        this.say('헥헥…')
       }
     }
   }
@@ -221,5 +360,27 @@ export class Character {
       return
     }
     this.moving = this.moveToward(t.x, t.y, this.cfg.walkSpeed, dt)
+  }
+
+  private updateWatch(dt: number, world: World) {
+    if (!this.watchTarget) {
+      this.state = 'idle'
+      this.pauseTimer = 1
+      return
+    }
+    const b = world.bounds
+    const tx = Math.max(b.minX, Math.min(b.maxX, this.watchTarget.x))
+    const ty = Math.max(b.minY, Math.min(b.maxY, this.watchTarget.y))
+    if (Math.hypot(tx - this.x, ty - this.y) > 4) {
+      this.moving = this.moveToward(tx, ty, this.cfg.walkSpeed, dt)
+      return
+    }
+    // 도착 — 구경
+    this.watchTimer -= dt
+    if (this.watchTimer <= 0) {
+      this.watchTarget = null
+      this.state = 'idle'
+      this.pauseTimer = 1 + this.rng() * 3
+    }
   }
 }

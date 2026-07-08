@@ -1,4 +1,6 @@
-// Windows 전체화면 앱 감지 — 전면(foreground) 창이 모니터 전체를 덮으면 캐릭터를 숨긴다.
+// Windows 전면(foreground) 창 감시 — 두 가지 용도:
+//  1) 전면 창이 모니터 전체를 덮으면(전체화면 앱) 캐릭터를 숨긴다
+//  2) 활성 창 위치/크기를 렌더러에 알려 "창 쳐다보기" 행동을 발동시킨다
 // 네이티브 모듈 대신 상주 PowerShell 프로세스 하나로 Win32 API를 폴링한다
 // (설치 리스크 0, CPU ~0%). macOS는 setVisibleOnAllWorkspaces의
 // visibleOnFullScreen: false가 스페이스 차원에서 처리하므로 불필요.
@@ -6,8 +8,16 @@
 // 제외 규칙:
 //  - Progman / WorkerW: 바탕화면 자체가 전면일 때 (항상 화면 전체 크기)
 //  - 우리 자신의 프로세스: 캐릭터 클릭으로 오버레이가 전면이 된 경우
+//
+// 출력 프로토콜: 상태 변화 시 한 줄 CSV → "fs,left,top,right,bottom"
+//   fs: 1=전체화면, 0=아님. 좌표는 전면 창 rect (제외 대상이면 0,0,0,0)
 
 import { spawn, type ChildProcess } from 'node:child_process'
+
+export interface ForegroundInfo {
+  fullscreen: boolean
+  rect: { left: number; top: number; right: number; bottom: number } | null
+}
 
 let child: ChildProcess | null = null
 
@@ -27,7 +37,7 @@ public static class FSNative {
 '@
 $prev = ''
 while ($true) {
-  $isFs = $false
+  $line = '0,0,0,0,0'
   $h = [FSNative]::GetForegroundWindow()
   if ($h -ne [IntPtr]::Zero) {
     $r = New-Object FSNative+RECT
@@ -37,20 +47,21 @@ while ($true) {
     $cls = $sb.ToString()
     $wpid = [uint32]0
     [void][FSNative]::GetWindowThreadProcessId($h, [ref]$wpid)
-    $scr = [System.Windows.Forms.Screen]::FromHandle($h).Bounds
     if ($cls -ne 'Progman' -and $cls -ne 'WorkerW' -and $wpid -ne OUR_PID) {
+      $scr = [System.Windows.Forms.Screen]::FromHandle($h).Bounds
+      $fs = '0'
       if ($r.L -le $scr.Left -and $r.T -le $scr.Top -and $r.R -ge $scr.Right -and $r.B -ge $scr.Bottom) {
-        $isFs = $true
+        $fs = '1'
       }
+      $line = $fs + ',' + $r.L + ',' + $r.T + ',' + $r.R + ',' + $r.B
     }
   }
-  $msg = if ($isFs) { '1' } else { '0' }
-  if ($msg -ne $prev) { [Console]::Out.WriteLine($msg); [Console]::Out.Flush(); $prev = $msg }
+  if ($line -ne $prev) { [Console]::Out.WriteLine($line); [Console]::Out.Flush(); $prev = $line }
   Start-Sleep -Milliseconds 700
 }
 `.replace('OUR_PID', String(process.pid))
 
-export function startFullscreenWatcher(onChange: (fullscreen: boolean) => void) {
+export function startFullscreenWatcher(onChange: (info: ForegroundInfo) => void) {
   if (process.platform !== 'win32') return
 
   child = spawn(
@@ -66,14 +77,21 @@ export function startFullscreenWatcher(onChange: (fullscreen: boolean) => void) 
     while ((idx = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, idx).trim()
       buf = buf.slice(idx + 1)
-      if (line === '1') onChange(true)
-      else if (line === '0') onChange(false)
+      const parts = line.split(',').map(Number)
+      if (parts.length !== 5 || parts.some(Number.isNaN)) continue
+      const [fs, left, top, right, bottom] = parts
+      const hasRect = right > left && bottom > top
+      onChange({
+        fullscreen: fs === 1,
+        rect: hasRect ? { left, top, right, bottom } : null,
+      })
     }
   })
 
   // 워처가 죽어도 앱은 계속 동작 (감지 기능만 우아하게 상실)
-  child.on('error', () => onChange(false))
-  child.on('exit', () => onChange(false))
+  const degrade = () => onChange({ fullscreen: false, rect: null })
+  child.on('error', degrade)
+  child.on('exit', degrade)
 }
 
 export function stopFullscreenWatcher() {

@@ -124,9 +124,19 @@ app.whenReady().then(() => {
   createWindow()
   createTray()
   // 전체화면 앱(유튜브 전체화면, 게임 등) 감지 시 캐릭터 자동 숨김 — 방해하지 않음 원칙
-  startFullscreenWatcher((fs) => {
-    fullscreenHidden = fs
+  // + 활성 창 rect를 렌더러에 전달해 "창 쳐다보기" 행동 발동
+  startFullscreenWatcher((info) => {
+    fullscreenHidden = info.fullscreen
     applyVisibility()
+    if (!info.fullscreen && info.rect && win && !win.isDestroyed()) {
+      const b = win.getBounds()
+      win.webContents.send('active-window', {
+        x: info.rect.left - b.x,
+        y: info.rect.top - b.y,
+        w: info.rect.right - info.rect.left,
+        h: info.rect.bottom - info.rect.top,
+      })
+    }
   })
 })
 

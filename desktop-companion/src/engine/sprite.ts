@@ -61,9 +61,38 @@ const LEGS_WALK_A = [
 
 const LEGS_WALK_B = LEGS_WALK_A.map((row) => row.split('').reverse().join(''))
 
+// 집혀서 공중에 뜬 상태 — 다리를 허둥대는 두 프레임
+const LEGS_FLAIL_A = [
+  '....PPPPPPPP....',
+  '...PPPP..PPPP...',
+  '..PPP......PPP..',
+  '.PPP........PPP.',
+  '.BBB........BBB.',
+  '................',
+  '................',
+]
+
+const LEGS_FLAIL_B = [
+  '....PPPPPPPP....',
+  '....PPP..PPP....',
+  '.....PPP.PPP....',
+  '....PPP...PPP...',
+  '....BBB...BBB...',
+  '................',
+  '................',
+]
+
 export const HEART = ['.HH.HH.', 'HHHHHHH', 'HHHHHHH', '.HHHHH.', '..HHH..', '...H...']
 
-export type FrameName = 'idle' | 'blink' | 'walkA' | 'walkB' | 'sleep' | 'pant'
+export type FrameName =
+  | 'idle'
+  | 'blink'
+  | 'walkA'
+  | 'walkB'
+  | 'sleep'
+  | 'pant'
+  | 'heldA'
+  | 'heldB'
 
 function closeEyes(rows: string[]): string[] {
   return rows.map((r) => r.replace(/E/g, 'L'))
@@ -76,6 +105,8 @@ const FRAME_MAPS: Record<FrameName, string[]> = {
   walkB: [...BODY, ...LEGS_WALK_B],
   sleep: [...closeEyes(BODY), ...LEGS_IDLE], // 렌더 시 90° 눕혀 그린다
   pant: [...closeEyes(BODY), ...LEGS_IDLE], // 렌더 시 웅크림 오프셋 + 땀방울
+  heldA: [...BODY, ...LEGS_FLAIL_A], // 렌더 시 머리 잡힘 피벗으로 살랑살랑
+  heldB: [...BODY, ...LEGS_FLAIL_B],
 }
 
 export interface BakedFrame {

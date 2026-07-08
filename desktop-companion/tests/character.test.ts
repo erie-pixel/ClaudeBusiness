@@ -145,3 +145,117 @@ describe('명령과 상호작용', () => {
     expect(char.state).toBe('idle')
   })
 })
+
+describe('집어 옮기기 (held)', () => {
+  it('집으면 held 상태가 되어 스스로 움직이지 않고, 렌더러가 위치를 지정한다', () => {
+    const char = new Character(100, CY, DEFAULT_CONFIG, () => 0.5)
+    const world = makeWorld(1500)
+    char.commandFollow()
+    char.grab()
+    expect(char.state).toBe('held')
+    expect(char.pose).toBe('held')
+    expect(char.messages).toContain('으앗?!')
+    // held 중에는 update가 이동시키지 않는다 (커서가 멀어도)
+    simulate(char, world, 2)
+    expect(char.x).toBe(100)
+    // 렌더러가 커서 위치로 직접 이동
+    char.heldMoveTo(800, 600, world.bounds)
+    expect(char.x).toBe(800)
+    expect(char.y).toBe(600)
+  })
+
+  it('놓으면 잠깐 어리둥절하다가 일상으로 복귀한다', () => {
+    const char = new Character(100, CY, DEFAULT_CONFIG, () => 0.5)
+    char.grab()
+    char.release()
+    expect(char.state).toBe('idle')
+    const world = makeWorld()
+    simulate(char, world, 3)
+    expect(char.state).toBe('wander') // 어리둥절 끝 → 배회 재개
+  })
+
+  it('heldMoveTo는 경계를 벗어나지 않는다', () => {
+    const char = new Character(100, CY, DEFAULT_CONFIG, () => 0.5)
+    const world = makeWorld()
+    char.grab()
+    char.heldMoveTo(-500, 99999, world.bounds)
+    expect(char.x).toBe(world.bounds.minX)
+    expect(char.y).toBe(world.bounds.maxY)
+  })
+})
+
+describe('스탯 시스템', () => {
+  it('간식을 주면 허기가 줄고 기분이 좋아진다', () => {
+    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.5)
+    char.hunger = 90
+    const moodBefore = char.mood
+    char.feed()
+    expect(char.hunger).toBe(90 - DEFAULT_CONFIG.hungerFeedRelief)
+    expect(char.mood).toBeGreaterThan(moodBefore)
+    expect(char.messages).toContain('냠냠!')
+  })
+
+  it('배가 고프면 조르는 말풍선을 띄운다', () => {
+    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.5)
+    char.hunger = 95
+    char.commandStay()
+    simulate(char, makeWorld(), 1)
+    expect(char.messages).toContain('배고파…')
+  })
+
+  it('졸림이 임계값을 넘으면 스스로 낮잠을 자고, 자고 나면 깬다', () => {
+    // 빠른 테스트를 위해 회복 속도를 크게
+    const cfg = { ...DEFAULT_CONFIG, sleepinessNapRelief: 50 }
+    const char = new Character(0, CY, cfg, () => 0.5)
+    char.sleepiness = 90
+    char.state = 'stay'
+    simulate(char, makeWorld(), 1)
+    expect(char.state).toBe('stay') // 사용자 명령(stay) 중에는 자율 낮잠 발동 안 함
+    char.state = 'idle'
+    char.update(1 / 60, makeWorld())
+    expect(char.state).toBe('nap') // idle에서는 발동
+    simulate(char, makeWorld(), 3)
+    expect(char.state).not.toBe('nap') // 졸림 해소 → 기상
+    expect(char.sleepiness).toBeLessThanOrEqual(cfg.napWakeAt)
+  })
+
+  it('밤에는 졸림이 더 빨리 쌓인다', () => {
+    const day = new Character(0, CY, DEFAULT_CONFIG, () => 0.5, () => 14)
+    const night = new Character(0, CY, DEFAULT_CONFIG, () => 0.5, () => 23)
+    day.commandStay()
+    night.commandStay()
+    simulate(day, makeWorld(), 60)
+    simulate(night, makeWorld(), 60)
+    expect(night.sleepiness).toBeGreaterThan(day.sleepiness)
+  })
+})
+
+describe('창 쳐다보기 (watch)', () => {
+  it('활성 창 알림을 받으면 확률에 따라 구경하러 간다', () => {
+    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.1) // rng 0.1 < watchChance 0.5 → 발동
+    char.state = 'idle'
+    char.notifyActiveWindow({ x: 500, y: 300 })
+    expect(char.state).toBe('watch')
+    const world = makeWorld()
+    simulate(char, world, 5)
+    // 목표 지점으로 이동 중이거나 도착
+    expect(char.x).toBeGreaterThan(0)
+  })
+
+  it('구경이 끝나면 일상으로 돌아간다', () => {
+    const cfg = { ...DEFAULT_CONFIG, watchTimeMin: 0.5, watchTimeMax: 0.5 }
+    const char = new Character(490, 295, cfg, () => 0.1)
+    char.state = 'idle'
+    char.notifyActiveWindow({ x: 500, y: 300 })
+    expect(char.state).toBe('watch')
+    simulate(char, makeWorld(), 5)
+    expect(char.state === 'idle' || char.state === 'wander').toBe(true)
+  })
+
+  it('따라오기 중에는 한눈팔지 않는다', () => {
+    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.1)
+    char.commandFollow()
+    char.notifyActiveWindow({ x: 500, y: 300 })
+    expect(char.state).toBe('follow')
+  })
+})
