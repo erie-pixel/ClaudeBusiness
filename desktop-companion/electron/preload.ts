@@ -11,6 +11,10 @@ export interface LookState {
   hair: number
   top: number
   bottom: number
+  hairStyle: string
+  eyesStyle: string
+  mouthStyle: string
+  topStyle: string
 }
 
 export interface RendererSettings {

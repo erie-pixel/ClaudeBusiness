@@ -15,6 +15,7 @@ import {
   type FrameName,
   type BakedFrame,
 } from './engine/sprite'
+import { partsBySlot, type PartSlot } from './engine/parts'
 import type { CompanionBridge, SofaState } from '../electron/preload'
 
 declare global {
@@ -390,12 +391,38 @@ window.addEventListener('click', (e) => {
 
 const wardrobe = document.getElementById('wardrobe') as HTMLDivElement
 
-const LOOK_SLOTS: Array<{ key: keyof Look; label: string; colors: readonly string[] }> = [
+const COLOR_SLOTS: Array<{
+  key: 'skin' | 'hair' | 'top' | 'bottom'
+  label: string
+  colors: readonly string[]
+}> = [
   { key: 'skin', label: '피부', colors: SWATCHES.skin },
   { key: 'hair', label: '머리', colors: SWATCHES.hair },
   { key: 'top', label: '상의', colors: SWATCHES.top },
   { key: 'bottom', label: '하의', colors: SWATCHES.bottom },
 ]
+
+const STYLE_SLOTS: Array<{
+  key: 'hairStyle' | 'eyesStyle' | 'mouthStyle' | 'topStyle'
+  label: string
+  slot: PartSlot
+}> = [
+  { key: 'hairStyle', label: '머리', slot: 'hair' },
+  { key: 'eyesStyle', label: '눈', slot: 'eyes' },
+  { key: 'mouthStyle', label: '입', slot: 'mouth' },
+  { key: 'topStyle', label: '상의', slot: 'top' },
+]
+
+function cycleStyle(key: (typeof STYLE_SLOTS)[number]['key'], slot: PartSlot, dir: 1 | -1) {
+  const list = partsBySlot(slot)
+  const idx = Math.max(
+    0,
+    list.findIndex((p) => p.id === look[key]),
+  )
+  const next = list[(idx + dir + list.length) % list.length]
+  applyLook({ ...look, [key]: next.id })
+  bridge.saveLook(look)
+}
 
 function buildWardrobe() {
   wardrobe.innerHTML = ''
@@ -404,7 +431,46 @@ function buildWardrobe() {
   title.textContent = '옷장'
   wardrobe.appendChild(title)
 
-  for (const slot of LOOK_SLOTS) {
+  // 모양 (파츠) — ◀ 이름 ▶ 로 순환 선택
+  for (const st of STYLE_SLOTS) {
+    const row = document.createElement('div')
+    row.className = 'w-row'
+    const name = document.createElement('span')
+    name.textContent = st.label
+    row.appendChild(name)
+
+    const prev = document.createElement('button')
+    prev.className = 'w-arrow'
+    prev.textContent = '◀'
+    prev.addEventListener('click', () => {
+      cycleStyle(st.key, st.slot, -1)
+      buildWardrobe()
+    })
+    row.appendChild(prev)
+
+    const current = document.createElement('span')
+    current.className = 'w-current'
+    const part = partsBySlot(st.slot).find((p) => p.id === look[st.key])
+    current.textContent = part?.name ?? '?'
+    row.appendChild(current)
+
+    const next = document.createElement('button')
+    next.className = 'w-arrow'
+    next.textContent = '▶'
+    next.addEventListener('click', () => {
+      cycleStyle(st.key, st.slot, 1)
+      buildWardrobe()
+    })
+    row.appendChild(next)
+
+    wardrobe.appendChild(row)
+  }
+
+  const hr = document.createElement('div')
+  hr.className = 'sep'
+  wardrobe.appendChild(hr)
+
+  for (const slot of COLOR_SLOTS) {
     const row = document.createElement('div')
     row.className = 'w-row'
     const name = document.createElement('span')

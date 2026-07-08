@@ -14,10 +14,16 @@ export interface SofaSettings {
 }
 
 export interface LookSettings {
+  // 색 (견본 인덱스)
   skin: number
   hair: number
   top: number
   bottom: number
+  // 모양 (파츠 id — 파츠 팩 manifest의 id와 매칭)
+  hairStyle: string
+  eyesStyle: string
+  mouthStyle: string
+  topStyle: string
 }
 
 export interface AppSettings {
@@ -41,7 +47,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
   activity: 'normal',
   displayId: null,
   sofa: { enabled: false, x: 0.72, y: 0.78 },
-  look: { skin: 0, hair: 0, top: 0, bottom: 0 },
+  look: {
+    skin: 0,
+    hair: 0,
+    top: 0,
+    bottom: 0,
+    hairStyle: 'short',
+    eyesStyle: 'normal',
+    mouthStyle: 'smile',
+    topStyle: 'tee',
+  },
 }
 
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json')

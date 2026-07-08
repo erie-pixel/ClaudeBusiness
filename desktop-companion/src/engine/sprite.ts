@@ -1,6 +1,8 @@
-// 픽셀 스프라이트 — ASCII 픽셀 맵을 런타임에 캔버스로 굽는다.
-// Phase 2: 팔레트 스왑 커스터마이징 (피부/머리/상의/하의 색) 지원.
-// 문자 = 팔레트 키. '.' 및 규격 밖은 투명. 파서는 행 길이에 관대하다.
+// 픽셀 스프라이트 — 베이스(민머리 몸) 위에 파츠(머리/눈/입/상의)를 레이어 합성한 뒤
+// 팔레트 스왑(색 커스터마이징)을 적용해 캔버스로 굽는다. (기획서 §2.2, §8)
+// 합성 순서: 베이스+다리 → 상의 → 머리 → 눈 → 입. compose는 순수 함수라 헤드리스 테스트 가능.
+
+import { getPart, type PartMap } from './parts'
 
 export const SPRITE_W = 16
 export const SPRITE_H = 24
@@ -16,13 +18,37 @@ export const SWATCHES = {
 } as const
 
 export interface Look {
+  // 색 (견본 인덱스)
   skin: number
   hair: number
   top: number
   bottom: number
+  // 모양 (파츠 id)
+  hairStyle: string
+  eyesStyle: string
+  mouthStyle: string
+  topStyle: string
 }
 
-export const DEFAULT_LOOK: Look = { skin: 0, hair: 0, top: 0, bottom: 0 }
+export const DEFAULT_LOOK: Look = {
+  skin: 0,
+  hair: 0,
+  top: 0,
+  bottom: 0,
+  hairStyle: 'short',
+  eyesStyle: 'normal',
+  mouthStyle: 'smile',
+  topStyle: 'tee',
+}
+
+/** hex 컬러를 어둡게 (파생 음영색 — 후드 그늘 등) */
+function darken(hex: string, f = 0.72): string {
+  const n = parseInt(hex.slice(1), 16)
+  const r = Math.round(((n >> 16) & 255) * f)
+  const g = Math.round(((n >> 8) & 255) * f)
+  const b = Math.round((n & 255) * f)
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`
+}
 
 const BASE_PALETTE: Record<string, string> = {
   K: SWATCHES.hair[0], // hair
@@ -31,6 +57,8 @@ const BASE_PALETTE: Record<string, string> = {
   L: '#a8794f', // closed eye / lash
   M: '#c96a5b', // mouth
   T: SWATCHES.top[0], // shirt
+  U: darken(SWATCHES.top[0]), // shirt shade (후드 등)
+  V: '#f2f2ec', // collar white
   P: SWATCHES.bottom[0], // pants
   B: '#8a5a3b', // shoes
   H: '#e85d75', // heart
@@ -43,48 +71,29 @@ const BASE_PALETTE: Record<string, string> = {
 
 function paletteWithLook(look: Look): Record<string, string> {
   const clamp = (arr: readonly string[], i: number) => arr[Math.max(0, Math.min(arr.length - 1, i))]
+  const top = clamp(SWATCHES.top, look.top)
   return {
     ...BASE_PALETTE,
     S: clamp(SWATCHES.skin, look.skin),
     K: clamp(SWATCHES.hair, look.hair),
-    T: clamp(SWATCHES.top, look.top),
+    T: top,
+    U: darken(top),
     P: clamp(SWATCHES.bottom, look.bottom),
   }
 }
 
-// 몸통(머리~허리, 17행) — 다리 변형과 조합해 24행 프레임을 만든다
-const BODY = [
+// 민머리 베이스 몸 (17행) — 머리/눈/입/상의는 파츠가 덮는다
+const BASE_BODY = [
   '................',
-  '.....KKKKKK.....',
-  '....KKKKKKKK....',
-  '...KKKKKKKKKK...',
-  '...KKSSSSSSKK...',
-  '...KSSSSSSSSK...',
-  '...KSESSSSESK...',
-  '...KSSSSSSSSK...',
-  '...KSSSMMSSSK...',
+  '................',
   '....SSSSSSSS....',
-  '.....SSSSSS.....',
-  '....TTTTTTTT....',
-  '...TTTTTTTTTT...',
-  '..STTTTTTTTTTS..',
-  '..STTTTTTTTTTS..',
-  '...TTTTTTTTTT...',
-  '....TTTTTTTT....',
-]
-
-// 뒷모습 (사용자 화면/창을 쳐다볼 때) — 얼굴 없이 뒷머리
-const BODY_BACK = [
-  '................',
-  '.....KKKKKK.....',
-  '....KKKKKKKK....',
-  '...KKKKKKKKKK...',
-  '...KKKKKKKKKK...',
-  '...KKKKKKKKKK...',
-  '...KKKKKKKKKK...',
-  '...KKKKKKKKKK...',
-  '...KKKKKKKKKK...',
-  '....KKKKKKKK....',
+  '...SSSSSSSSSS...',
+  '...SSSSSSSSSS...',
+  '...SSSSSSSSSS...',
+  '...SSSSSSSSSS...',
+  '...SSSSSSSSSS...',
+  '...SSSSSSSSSS...',
+  '....SSSSSSSS....',
   '.....SSSSSS.....',
   '....TTTTTTTT....',
   '...TTTTTTTTTT...',
@@ -207,23 +216,59 @@ export type FrameName =
   | 'back'
   | 'sit'
 
-function closeEyes(rows: string[]): string[] {
-  return rows.map((r) => r.replace(/E/g, 'L'))
+const FRAME_LEGS: Record<FrameName, string[]> = {
+  idle: LEGS_IDLE,
+  blink: LEGS_IDLE,
+  walkA: LEGS_WALK_A,
+  walkB: LEGS_WALK_B,
+  sleep: LEGS_IDLE,
+  pant: LEGS_IDLE,
+  heldA: LEGS_FLAIL_A,
+  heldB: LEGS_FLAIL_B,
+  workA: LEGS_WORK_A,
+  workB: LEGS_WORK_B,
+  back: LEGS_IDLE,
+  sit: LEGS_SIT,
 }
 
-const FRAME_MAPS: Record<FrameName, string[]> = {
-  idle: [...BODY, ...LEGS_IDLE],
-  blink: [...closeEyes(BODY), ...LEGS_IDLE],
-  walkA: [...BODY, ...LEGS_WALK_A],
-  walkB: [...BODY, ...LEGS_WALK_B],
-  sleep: [...closeEyes(BODY), ...LEGS_IDLE], // 렌더 시 90° 눕혀 그린다
-  pant: [...closeEyes(BODY), ...LEGS_IDLE], // 렌더 시 웅크림 오프셋 + 땀방울
-  heldA: [...BODY, ...LEGS_FLAIL_A], // 렌더 시 머리 잡힘 피벗으로 살랑살랑
-  heldB: [...BODY, ...LEGS_FLAIL_B],
-  workA: [...BODY, ...LEGS_WORK_A],
-  workB: [...BODY, ...LEGS_WORK_B],
-  back: [...BODY_BACK, ...LEGS_IDLE], // 뒤돌아보기 (창/작업 구경)
-  sit: [...BODY, ...LEGS_SIT],
+/** 눈을 감고 있는 프레임들 (눈 파츠의 E를 L로 치환) */
+const CLOSED_EYE_FRAMES: ReadonlySet<FrameName> = new Set(['blink', 'sleep', 'pant'])
+
+/** 파츠 오버레이 — '.'이 아닌 문자만 베이스를 덮는다 */
+function overlay(rows: string[][], part: PartMap) {
+  part.rows.forEach((row, i) => {
+    const y = part.y0 + i
+    if (y < 0 || y >= rows.length) return
+    for (let x = 0; x < Math.min(SPRITE_W, row.length); x++) {
+      if (row[x] !== '.') rows[y][x] = row[x]
+    }
+  })
+}
+
+/**
+ * 프레임 합성 (순수 함수 — 캔버스 없이 문자 그리드 반환, 테스트 대상).
+ * 순서: 베이스+다리 → 상의 → 머리 → (앞면이면) 눈 → 입
+ */
+export function composeMap(frame: FrameName, look: Look = DEFAULT_LOOK): string[] {
+  const isBack = frame === 'back'
+  const rows: string[][] = [...BASE_BODY, ...FRAME_LEGS[frame]].map((r) =>
+    r.padEnd(SPRITE_W, '.').split(''),
+  )
+
+  const top = getPart('top', look.topStyle)
+  overlay(rows, isBack ? (top.back ?? top.map) : top.map)
+
+  const hair = getPart('hair', look.hairStyle)
+  overlay(rows, isBack ? (hair.back ?? hair.map) : hair.map)
+
+  if (!isBack) {
+    overlay(rows, getPart('eyes', look.eyesStyle).map)
+    overlay(rows, getPart('mouth', look.mouthStyle).map)
+  }
+
+  let out = rows.map((r) => r.join(''))
+  if (CLOSED_EYE_FRAMES.has(frame)) out = out.map((r) => r.replace(/E/g, 'L'))
+  return out
 }
 
 export interface BakedFrame {
@@ -233,12 +278,12 @@ export interface BakedFrame {
 }
 
 export function bakeFrame(name: FrameName, look: Look = DEFAULT_LOOK): BakedFrame {
-  return bakeMap(FRAME_MAPS[name], SPRITE_W, SPRITE_H, paletteWithLook(look))
+  return bakeMap(composeMap(name, look), SPRITE_W, SPRITE_H, paletteWithLook(look))
 }
 
 export function bakeAllFrames(look: Look): Record<FrameName, BakedFrame> {
   const out = {} as Record<FrameName, BakedFrame>
-  for (const name of Object.keys(FRAME_MAPS) as FrameName[]) out[name] = bakeFrame(name, look)
+  for (const name of Object.keys(FRAME_LEGS) as FrameName[]) out[name] = bakeFrame(name, look)
   return out
 }
 

@@ -12,7 +12,16 @@ let settings: AppSettings = {
   activity: 'normal',
   displayId: null,
   sofa: { enabled: false, x: 0.72, y: 0.78 },
-  look: { skin: 0, hair: 0, top: 0, bottom: 0 },
+  look: {
+    skin: 0,
+    hair: 0,
+    top: 0,
+    bottom: 0,
+    hairStyle: 'short',
+    eyesStyle: 'normal',
+    mouthStyle: 'smile',
+    topStyle: 'tee',
+  },
 }
 
 function pushSettings() {
