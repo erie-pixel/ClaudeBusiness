@@ -376,11 +376,17 @@ window.addEventListener('click', (e) => {
     suppressClick = false
     return
   }
+  // 메뉴/옷장 내부에서 시작된 클릭은 UI 조작 — 닫기 판정에서 제외.
+  // contains() 대신 composedPath()를 쓰는 이유: 견본 클릭이 옷장 UI를 다시
+  // 그리면(innerHTML 교체) 이 핸들러 시점에는 target이 이미 DOM에서 떨어져
+  // contains()가 false가 되어 옷장이 클릭할 때마다 닫혀버린다.
+  const path = e.composedPath()
+  if (path.includes(menu) || path.includes(wardrobe)) return
   if (menuOpen) {
-    if (!menu.contains(e.target as Node)) closeMenu()
+    closeMenu()
     return
   }
-  if (wardrobeOpen && !wardrobe.contains(e.target as Node)) {
+  if (wardrobeOpen) {
     closeWardrobe()
     return
   }
