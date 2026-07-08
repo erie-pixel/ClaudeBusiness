@@ -13,6 +13,7 @@ export type StateName =
   | 'watch' // 활성 창 쳐다보기 (뒤돌아서 구경)
   | 'cowork' // 사용자가 일하는 동안 옆에서 같이 일하기
   | 'sit' // 소파에 앉아 쉬기 (홈 모드)
+  | 'social' // 친구 캐릭터에게 다가가 인사 (멀티플레이)
 
 export interface Bounds {
   minX: number
@@ -192,6 +193,11 @@ export class Character {
   private sitTimer = 0
   /** 사용자 장기 방치에 한 번만 반응 */
   private idleReacted = false
+  private socialTarget: { x: number; y: number } | null = null
+  private socialTimer = 0
+  private socialGreeted = false
+  /** 인사 후 잠시 쉬는 재발동 쿨다운 (s) */
+  private socialCooldown = 0
 
   constructor(
     x: number,
@@ -272,6 +278,22 @@ export class Character {
     this.y = Math.max(bounds.minY, Math.min(bounds.maxY, y))
   }
 
+  /** 친구 캐릭터가 근처에 있다는 알림 → 확률적으로 다가가 인사 */
+  notifyPeerNearby(point: { x: number; y: number }) {
+    if (this.socialCooldown > 0) return
+    if (this.state === 'social') {
+      this.socialTarget = point // 친구가 움직이면 따라 감
+      return
+    }
+    if (this.state !== 'wander' && this.state !== 'idle') return
+    if (this.rng() < 0.4) {
+      this.state = 'social'
+      this.socialTarget = point
+      this.socialTimer = 4 + this.rng() * 5
+      this.socialGreeted = false
+    }
+  }
+
   /** 활성 창이 바뀌었다는 알림 → 확률적으로 구경하러 감 (홈 모드에서는 안 감) */
   notifyActiveWindow(point: { x: number; y: number }, homeMode = false) {
     this.lastWindowPoint = point // Co-work 자리 선정에도 사용
@@ -307,6 +329,7 @@ export class Character {
         return this.moving ? 'walk' : this.watchArrived ? 'back' : 'idle'
       case 'sit':
         return this.moving ? 'walk' : 'sit'
+      case 'social':
       case 'wander':
         return this.moving ? 'walk' : 'idle'
       default:
@@ -349,6 +372,10 @@ export class Character {
         break
       case 'sit':
         this.updateSit(dt, world)
+        this.regen(dt)
+        break
+      case 'social':
+        this.updateSocial(dt, world)
         this.regen(dt)
         break
       case 'wander':
@@ -396,6 +423,8 @@ export class Character {
     } else if (world.userIdleSec < 5) {
       this.idleReacted = false
     }
+
+    if (this.socialCooldown > 0) this.socialCooldown -= dt
 
     // 같이 일하기: 사용자 활동이 꾸준히 이어지면 옆에 와서 같이 일한다 (홈 모드에서는 안 함)
     if (this.coworkCooldown > 0) this.coworkCooldown -= dt
@@ -581,6 +610,36 @@ export class Character {
     if (this.sitTimer <= 0) {
       this.state = 'idle'
       this.pauseTimer = 2 + this.rng() * 4
+    }
+  }
+
+  private updateSocial(dt: number, world: World) {
+    if (!this.socialTarget) {
+      this.state = 'idle'
+      this.pauseTimer = 1
+      return
+    }
+    const b = world.bounds
+    const tx = Math.max(b.minX, Math.min(b.maxX, this.socialTarget.x))
+    const ty = Math.max(b.minY, Math.min(b.maxY, this.socialTarget.y))
+    const dist = Math.hypot(tx - this.x, ty - this.y)
+    if (dist > 34) {
+      this.moving = this.moveToward(tx, ty, this.cfg.walkSpeed, dt)
+      return
+    }
+    // 도착 — 친구를 바라보며 인사
+    if (Math.abs(tx - this.x) > 1) this.facing = tx > this.x ? 1 : -1
+    if (!this.socialGreeted) {
+      this.socialGreeted = true
+      this.say(this.rng() < 0.5 ? '♪' : '!')
+      this.emoteTimer = 1.6 // 하트도 살짝
+    }
+    this.socialTimer -= dt
+    if (this.socialTimer <= 0) {
+      this.socialTarget = null
+      this.state = 'idle'
+      this.pauseTimer = 2 + this.rng() * 4
+      this.socialCooldown = 45 + this.rng() * 30
     }
   }
 

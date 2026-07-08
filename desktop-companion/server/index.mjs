@@ -13,8 +13,11 @@ const CHAT_WINDOW_MS = 3000
 
 const wss = new WebSocketServer({ port: PORT })
 const rooms = new Rooms(MAX_ROOM)
-/** @type {Map<string, {ws: any, name: string, look: any, lastState: any, chatTimes: number[]}>} */
+/** @type {Map<string, {ws: any, name: string, look: any, lastState: any, chatTimes: number[], emoteTimes: number[]}>} */
 const clients = new Map()
+
+// 빈 방은 2분 유예 후 정리 (전원이 잠깐 끊겨도 재접속 가능)
+setInterval(() => rooms.sweep(), 30000)
 let seq = 1
 
 const send = (ws, obj) => {
@@ -35,7 +38,7 @@ const peerInfo = (id) => {
 
 wss.on('connection', (ws) => {
   const id = String(seq++)
-  clients.set(id, { ws, name: '?', look: null, lastState: null, chatTimes: [] })
+  clients.set(id, { ws, name: '?', look: null, lastState: null, chatTimes: [], emoteTimes: [] })
 
   ws.on('message', (data) => {
     let msg
@@ -76,6 +79,17 @@ wss.on('connection', (ws) => {
         // 행동 intent — 정규화 좌표 + 포즈. 수신 측이 자기 화면에 맞게 재해석
         me.lastState = { nx: msg.nx, ny: msg.ny, pose: msg.pose, facing: msg.facing }
         toPeers(id, { t: 'state', id, ...me.lastState })
+        break
+      }
+      case 'emote': {
+        // 캐릭터 이모트 심볼(!, ?, ♪ 등) 중계 — 상대 화면에서도 보이게
+        const now = Date.now()
+        me.emoteTimes = me.emoteTimes.filter((t) => now - t < CHAT_WINDOW_MS)
+        if (me.emoteTimes.length >= 6) return
+        me.emoteTimes.push(now)
+        const sym = String(msg.sym ?? '').slice(0, 4)
+        if (!sym) return
+        toPeers(id, { t: 'emote', id, sym })
         break
       }
       case 'chat': {

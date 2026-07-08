@@ -31,14 +31,29 @@ describe('룸 관리 (relay 서버)', () => {
     expect(rooms.join(code, 'b')).toEqual({ error: 'already-in' })
   })
 
-  it('나가면 남은 사람 목록을 알려주고, 방이 비면 방을 없앤다', () => {
-    const rooms = new Rooms(4)
+  it('나가면 남은 사람 목록을 알려주고, 빈 방은 유예 후에만 사라진다 (재접속 지원)', () => {
+    let now = 1000
+    const rooms = new Rooms(4, Math.random, 120000, () => now)
     const code = rooms.create('a')
     rooms.join(code, 'b')
     expect(rooms.leave('a')).toEqual({ code, remaining: ['b'] })
     expect(rooms.leave('b')).toEqual({ code, remaining: [] })
-    // 방이 사라졌으므로 같은 코드로 재참여 불가
+    // 유예 시간 안에는 같은 코드로 재접속 가능 (순간 끊김 복구)
+    expect(rooms.join(code, 'a')).toEqual({ ok: true, peers: [] })
+    rooms.leave('a')
+    // 유예 시간이 지나고 sweep 되면 방 소멸
+    now += 120001
+    expect(rooms.sweep()).toEqual([code])
     expect(rooms.join(code, 'c')).toEqual({ error: 'no-room' })
+  })
+
+  it('sweep은 사람이 있는 방을 지우지 않는다', () => {
+    let now = 0
+    const rooms = new Rooms(4, Math.random, 100, () => now)
+    const code = rooms.create('a')
+    now += 10000
+    expect(rooms.sweep()).toEqual([])
+    expect(rooms.codeOf('a')).toBe(code)
   })
 
   it('다른 방에 참여하면 이전 방에서 자동으로 나간다', () => {

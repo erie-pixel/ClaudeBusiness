@@ -364,6 +364,32 @@ describe('활동성 프리셋', () => {
   })
 })
 
+describe('친구에게 인사 (social)', () => {
+  it('근처 친구 알림을 받으면 다가가서 인사하고, 끝나면 쿨다운 동안 재발동하지 않는다', () => {
+    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.1) // 0.1 < 0.4 → 발동
+    char.state = 'idle'
+    char.notifyPeerNearby({ x: 200, y: CY })
+    expect(char.state).toBe('social')
+    const world = makeWorld()
+    simulate(char, world, 10) // 걸어가서 도착
+    expect(Math.abs(char.x - 200)).toBeLessThanOrEqual(35)
+    expect(char.messages.length).toBeGreaterThan(0) // 인사 이모트
+    simulate(char, world, 12) // socialTimer 종료
+    expect(char.state).not.toBe('social')
+    // 쿨다운 중에는 재발동 안 함
+    char.state = 'idle'
+    char.notifyPeerNearby({ x: 300, y: CY })
+    expect(char.state).toBe('idle')
+  })
+
+  it('따라오기 등 사용자 명령 중에는 인사하러 가지 않는다', () => {
+    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.1)
+    char.commandFollow()
+    char.notifyPeerNearby({ x: 200, y: CY })
+    expect(char.state).toBe('follow')
+  })
+})
+
 describe('창 쳐다보기 (watch)', () => {
   it('활성 창 알림을 받으면 확률에 따라 구경하러 간다', () => {
     const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.1) // rng 0.1 < watchChance 0.5 → 발동

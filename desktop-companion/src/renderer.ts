@@ -150,6 +150,10 @@ let roomCode: string | null = null
 let netNotice = '' // mp 패널에 표시할 상태/오류 메시지
 const peers = new PeerStore()
 const roomLog: Array<{ name: string; text: string; ts: number }> = []
+/** 친구 캐릭터의 이모트 심볼 (머리 위 표시) */
+const peerEmotes = new Map<string, { text: string; timer: number }>()
+/** 예기치 않은 끊김 시 자동 재접속 */
+const reconnect = { code: null as string | null, attempts: 0, timer: 0 }
 
 // 피어 look별 프레임 캐시 (커스터마이징 반영)
 const peerFramesCache = new Map<string, Record<FrameName, BakedFrame>>()
@@ -173,6 +177,8 @@ const net = new NetClient({
   onJoined(room, _self, infos) {
     roomCode = room
     netNotice = ''
+    reconnect.code = null
+    reconnect.attempts = 0
     peers.reset()
     for (const info of infos) peers.upsert(info)
     char.messages.push('!')
@@ -198,18 +204,33 @@ const net = new NetClient({
     pushLog(name, text)
     showBubble(id, text)
   },
+  onEmote(id, sym) {
+    peerEmotes.set(id, { text: sym, timer: 1.8 })
+  },
   onError(code) {
     netNotice = NET_ERRORS[code] ?? `오류: ${code}`
+    if (reconnect.code && code === 'no-room') {
+      // 방이 유예 기간을 넘겨 사라짐 — 재접속 포기
+      reconnect.code = null
+      netNotice = '방이 사라졌어요 — 새로 만들어 주세요'
+    }
     refreshMpPanel()
   },
   onClose() {
     if (roomCode) {
+      // 예기치 않은 끊김 → 같은 방으로 자동 재접속 시도
+      reconnect.code = roomCode
+      reconnect.attempts = 0
+      reconnect.timer = 1.5
       roomCode = null
       peers.reset()
       clearBubbles()
-      netNotice = '연결이 끊겼어요'
+      netNotice = '연결이 끊겼어요 — 재접속 시도 중…'
       char.messages.push('…')
       refreshMpPanel()
+    } else if (reconnect.code) {
+      // 재접속 시도가 또 실패 → 백오프 후 재시도
+      reconnect.timer = Math.min(16, 2 * Math.max(1, reconnect.attempts))
     }
   },
 })
@@ -223,9 +244,28 @@ function pushLog(name: string, text: string) {
 function leaveRoom() {
   net.disconnect()
   roomCode = null
+  reconnect.code = null
   peers.reset()
   clearBubbles()
+  peerEmotes.clear()
   refreshMpPanel()
+}
+
+function tickReconnect(dt: number) {
+  if (!reconnect.code) return
+  reconnect.timer -= dt
+  if (reconnect.timer > 0) return
+  if (reconnect.attempts >= 5) {
+    netNotice = '재접속에 실패했어요 — "친구들" 메뉴에서 다시 참여해 주세요'
+    reconnect.code = null
+    refreshMpPanel()
+    return
+  }
+  reconnect.attempts++
+  reconnect.timer = 999 // 결과(onJoined/onClose/onError)가 다음 스텝을 정한다
+  netNotice = `재접속 중… (${reconnect.attempts}/5)`
+  refreshMpPanel()
+  net.connectAnd(serverUrl, reconnect.code, playerName, look)
 }
 
 // 상태 전송 스로틀 (변화가 있을 때만, 최대 5Hz)
@@ -919,10 +959,40 @@ function updateEmote(dt: number) {
   if (emoteTimer <= 0 && char.messages.length > 0) {
     emoteText = char.messages.shift()!
     emoteTimer = EMOTE_TIME
+    if (roomCode && net.connected) net.sendEmote(emoteText)
   }
   if (emoteTimer > 0) {
     emoteTimer -= dt
     if (emoteTimer <= 0) emoteText = null
+  }
+}
+
+function drawEmoteSymbol(text: string, x: number, y: number, remain: number) {
+  const t = 1 - remain / EMOTE_TIME
+  const rise = t * 10 * (SCALE / 2)
+  const alpha = t > 0.7 ? 1 - (t - 0.7) / 0.3 : 1
+  const pop = t < 0.15 ? 0.7 + (t / 0.15) * 0.3 : 1
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.font = `bold ${Math.round(9 * SCALE * pop)}px 'Courier New', monospace`
+  ctx.textAlign = 'center'
+  ctx.lineWidth = 3
+  ctx.strokeStyle = '#22242f'
+  ctx.fillStyle = '#ffffff'
+  ctx.strokeText(text, x, y - rise)
+  ctx.fillText(text, x, y - rise)
+  ctx.restore()
+}
+
+function drawPeerEmotes(dt: number) {
+  for (const [id, e] of peerEmotes) {
+    e.timer -= dt
+    const peer = peers.peers.get(id)
+    if (e.timer <= 0 || !peer || !peer.hasState) {
+      peerEmotes.delete(id)
+      continue
+    }
+    drawEmoteSymbol(e.text, peer.x, peer.y - H - 8, e.timer)
   }
 }
 
@@ -1081,7 +1151,10 @@ function draw() {
   }
 
   drawEmote()
+  drawPeerEmotes(dtForDraw)
 }
+
+let dtForDraw = 0
 
 let last = performance.now()
 let lastPollActive = false
@@ -1103,17 +1176,21 @@ function loop(now: number) {
   char.update(dt, world)
   updateEmote(dt)
 
-  // 멀티플레이: 피어 보간, 상태 전송, 말풍선 위치, 근접 인사
+  // 멀티플레이: 피어 보간, 상태 전송, 말풍선 위치, 다가가서 인사
+  tickReconnect(dt)
   if (roomCode) {
     peers.tick(dt, canvas.width, canvas.height)
     maybeSendState(dt)
     greetCooldown -= dt
     if (greetCooldown <= 0) {
-      if (peers.near(char.x, char.y, 70)) {
-        char.messages.push('♪')
-        greetCooldown = 25 + Math.random() * 25
-      } else {
-        greetCooldown = 3
+      greetCooldown = 5
+      // 화면 안에 친구가 있으면 가끔 다가가 인사 (홈 모드면 반경 안일 때만)
+      const target = peers.near(char.x, char.y, 420)
+      if (target) {
+        const inHome =
+          !world.home ||
+          Math.hypot(target.x - world.home.x, target.y - world.home.y) <= world.home.radius
+        if (inHome) char.notifyPeerNearby({ x: target.x - 26 * char.facing, y: target.y })
       }
     }
     if (chatOpen) positionChat()
@@ -1128,6 +1205,7 @@ function loop(now: number) {
     bridge.setPollRate(wantActive)
   }
 
+  dtForDraw = dt
   draw()
   requestAnimationFrame(loop)
 }

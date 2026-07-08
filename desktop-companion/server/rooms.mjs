@@ -4,10 +4,13 @@
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' // 혼동 문자(I,L,O,0,1) 제외
 
 export class Rooms {
-  constructor(maxPerRoom = 4, rng = Math.random) {
+  constructor(maxPerRoom = 4, rng = Math.random, graceMs = 120000, now = Date.now) {
     this.maxPerRoom = maxPerRoom
     this.rng = rng
-    /** @type {Map<string, Set<string>>} code -> client ids */
+    /** 빈 방을 바로 지우지 않고 이 시간 동안 보존 — 순간 끊김 후 재접속 지원 */
+    this.graceMs = graceMs
+    this.now = now
+    /** @type {Map<string, {members: Set<string>, emptiedAt: number | null}>} */
     this.rooms = new Map()
     /** @type {Map<string, string>} client id -> code */
     this.clientRoom = new Map()
@@ -23,7 +26,7 @@ export class Rooms {
   create(clientId) {
     this.leave(clientId) // 기존 방에 있었다면 정리
     const code = this.makeCode()
-    this.rooms.set(code, new Set([clientId]))
+    this.rooms.set(code, { members: new Set([clientId]), emptiedAt: null })
     this.clientRoom.set(clientId, code)
     return code
   }
@@ -32,12 +35,13 @@ export class Rooms {
   join(code, clientId) {
     const room = this.rooms.get(code)
     if (!room) return { error: 'no-room' }
-    if (room.has(clientId)) return { error: 'already-in' }
-    if (room.size >= this.maxPerRoom) return { error: 'room-full' }
+    if (room.members.has(clientId)) return { error: 'already-in' }
+    if (room.members.size >= this.maxPerRoom) return { error: 'room-full' }
     this.leave(clientId)
-    room.add(clientId)
+    room.members.add(clientId)
+    room.emptiedAt = null
     this.clientRoom.set(clientId, code)
-    return { ok: true, peers: [...room].filter((id) => id !== clientId) }
+    return { ok: true, peers: [...room.members].filter((id) => id !== clientId) }
   }
 
   /** @returns {{code: string, remaining: string[]} | null} */
@@ -45,17 +49,30 @@ export class Rooms {
     const code = this.clientRoom.get(clientId)
     if (!code) return null
     const room = this.rooms.get(code)
-    room?.delete(clientId)
+    room?.members.delete(clientId)
     this.clientRoom.delete(clientId)
-    if (room && room.size === 0) this.rooms.delete(code)
-    return { code, remaining: room ? [...room] : [] }
+    if (room && room.members.size === 0) room.emptiedAt = this.now()
+    return { code, remaining: room ? [...room.members] : [] }
+  }
+
+  /** 유예 시간이 지난 빈 방 정리. 지운 코드 목록 반환 */
+  sweep() {
+    const now = this.now()
+    const removed = []
+    for (const [code, room] of this.rooms) {
+      if (room.emptiedAt !== null && now - room.emptiedAt >= this.graceMs) {
+        this.rooms.delete(code)
+        removed.push(code)
+      }
+    }
+    return removed
   }
 
   /** 같은 방의 다른 참여자들 */
   peersOf(clientId) {
     const code = this.clientRoom.get(clientId)
     if (!code) return []
-    return [...(this.rooms.get(code) ?? [])].filter((id) => id !== clientId)
+    return [...(this.rooms.get(code)?.members ?? [])].filter((id) => id !== clientId)
   }
 
   codeOf(clientId) {

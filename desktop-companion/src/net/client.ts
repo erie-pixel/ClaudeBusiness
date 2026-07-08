@@ -24,6 +24,7 @@ export interface NetCallbacks {
   onPeerLeave(id: string): void
   onPeerState(id: string, state: NetState): void
   onChat(id: string, name: string, text: string): void
+  onEmote(id: string, sym: string): void
   onError(code: string): void
   onClose(): void
 }
@@ -74,6 +75,9 @@ export class NetClient {
         case 'chat':
           this.cb.onChat(msg.id as string, msg.name as string, msg.text as string)
           break
+        case 'emote':
+          this.cb.onEmote(msg.id as string, msg.sym as string)
+          break
         case 'error':
           this.cb.onError(msg.code as string)
           break
@@ -96,6 +100,10 @@ export class NetClient {
 
   sendChat(text: string) {
     this.send({ t: 'chat', text })
+  }
+
+  sendEmote(sym: string) {
+    this.send({ t: 'emote', sym })
   }
 
   disconnect() {

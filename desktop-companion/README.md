@@ -74,10 +74,25 @@ macOS는 처음 실행 시 "화면 위에 표시" 관련 권한을 요구할 수
 npm run server      # 기본 포트 8787 (PORT 환경변수로 변경)
 ```
 
-서버는 룸·presence·중계만 담당하는 얇은 relay (`server/index.mjs`). 친구와
-쓰려면 한 명이 공인 IP/VPS/터널(예: cloudflared, tailscale)로 서버를 열고,
-각자 앱의 "친구들…" 패널에서 서버 주소(`ws://호스트:8787`)를 입력하면 된다.
-같은 PC에서 로컬 테스트: `npm run server` 후 기본 주소 그대로 사용.
+서버는 룸·presence·중계만 담당하는 얇은 relay (`server/index.mjs`).
+빈 방은 2분간 보존되어 순간 끊김 후 재접속이 가능하고, 클라이언트는 끊기면
+같은 방으로 최대 5회 자동 재접속을 시도한다.
+
+### 친구와 연결하는 법 (무료, 계정 거의 불필요)
+
+한 명이 서버를 켜고(`npm run server`) 아래 중 하나로 주소를 공유:
+
+1. **Tailscale (권장)** — 둘 다 https://tailscale.com 설치(무료) 후 같은
+   계정/네트워크로 로그인. 서버 켠 사람의 Tailscale IP(예: `100.x.y.z`)로
+   친구가 `ws://100.x.y.z:8787` 입력. 설정 한 번이면 계속 사용 가능.
+2. **cloudflared 터널 (계정 불필요)** — 서버 켠 사람이
+   `cloudflared tunnel --url http://localhost:8787` 실행 → 나오는
+   `https://xxx.trycloudflare.com` 주소를 `wss://xxx.trycloudflare.com`으로
+   바꿔 친구에게 공유. 실행할 때마다 주소가 바뀌는 임시 터널.
+3. **같은 공유기(같은 집/사무실)** — 서버 PC의 내부 IP로 `ws://192.168.x.x:8787`.
+
+같은 PC에서 혼자 확인: `npm run server` 후 기본 주소(`ws://127.0.0.1:8787`)
+그대로 방 만들기.
 
 ## 개발
 
