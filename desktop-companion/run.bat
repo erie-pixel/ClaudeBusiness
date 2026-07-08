@@ -1,6 +1,8 @@
 @echo off
-rem Desktop Companion launcher v3 - double-click to install & run.
-rem EVERYTHING - npm install/start output - is written to run-log.txt for debugging.
+rem Desktop Companion launcher v4 - double-click to install & run.
+rem On success the app launches DETACHED and this window closes by itself.
+rem If the character does not appear, run debug.bat instead - it keeps the
+rem window open and writes everything to run-log.txt.
 rem RULE: never use parentheses inside if/for blocks below, not even in echo text -
 rem cmd counts them as block delimiters and the whole script dies at parse time.
 setlocal EnableExtensions
@@ -8,7 +10,7 @@ title Desktop Companion Launcher
 cd /d "%~dp0"
 
 set LOG=run-log.txt
-echo ==== Desktop Companion launcher v3 ==== > "%LOG%"
+echo ==== Desktop Companion launcher v4 ==== > "%LOG%"
 echo folder: %CD% >> "%LOG%"
 
 echo.
@@ -59,26 +61,26 @@ if not exist "node_modules\electron\dist\electron.exe" (
 echo   dependencies OK
 echo step3: done >> "%LOG%"
 
-echo [4/4] Starting... a small pixel character will appear on your desktop.
-echo   Keep this window open. Quit: right-click character or tray heart icon.
-echo step4: npm start >> "%LOG%"
-call npm start >> "%LOG%" 2>&1
-set EXITCODE=%errorlevel%
-echo step4: exited %EXITCODE% >> "%LOG%"
-echo.
-echo App exited - code %EXITCODE%. Last log lines:
-echo ------------------------------------------------------------
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -Tail 25 '%LOG%'" 2>nul
-echo ------------------------------------------------------------
-echo If something went wrong, send run-log.txt (in this folder) or a screenshot.
-pause
-exit /b %EXITCODE%
+echo [4/4] Building and launching...
+echo step4: build >> "%LOG%"
+call npm run build >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo step4: build FAILED >> "%LOG%"
+  echo   Build failed - run debug.bat and send run-log.txt.
+  goto :fail
+)
+echo step4: launching detached >> "%LOG%"
+start "" "node_modules\electron\dist\electron.exe" .
+echo   Launched! The character will appear in a moment - this window closes now.
+echo   Quit the app anytime: right-click the character, or tray heart icon.
+timeout /t 3 >nul
+exit /b 0
 
 :fail
 echo.
 echo ------------------------------------------------------------
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -Tail 25 '%LOG%'" 2>nul
 echo ------------------------------------------------------------
-echo FAILED. Send run-log.txt (in this folder) or a screenshot of this window.
+echo FAILED. Send run-log.txt - in this folder - or a screenshot of this window.
 pause
 exit /b 1

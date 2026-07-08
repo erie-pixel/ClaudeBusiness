@@ -1,7 +1,23 @@
 import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage, globalShortcut } from 'electron'
 import * as path from 'node:path'
+import * as os from 'node:os'
 import { startFullscreenWatcher, stopFullscreenWatcher } from './fullscreen-win'
 import { loadSettings, saveSettings, type AppSettings } from './settings'
+import { startRelay, type RelayHandle } from '../server/relay.mjs'
+
+// "방 만들기" 시 앱에 내장된 relay 서버 — 별도 cmd/서버 실행이 필요 없다
+let relay: RelayHandle | null = null
+const RELAY_PORT = 8787
+
+function lanAddresses(): string[] {
+  const out: string[] = []
+  for (const infos of Object.values(os.networkInterfaces())) {
+    for (const info of infos ?? []) {
+      if (info.family === 'IPv4' && !info.internal) out.push(info.address)
+    }
+  }
+  return out
+}
 
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -285,6 +301,7 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  relay?.close()
 })
 
 ipcMain.on('set-interactive', (_e, interactive: boolean) => {
@@ -313,5 +330,19 @@ ipcMain.on('save-mp', (_e, mp: { playerName: string; serverUrl: string }) => {
     playerName: String(mp.playerName ?? '친구').slice(0, 20),
     serverUrl: String(mp.serverUrl ?? ''),
   })
+})
+
+// 방 만들기 → 내장 relay를 (아직 없으면) 띄우고 접속 정보를 돌려준다
+ipcMain.handle('ensure-relay', async () => {
+  if (!relay) {
+    try {
+      relay = startRelay({ port: RELAY_PORT })
+    } catch (err) {
+      // 포트 사용 중(별도 npm run server 실행 등)이면 그 서버를 그대로 쓴다
+      const msg = String(err)
+      if (!msg.includes('EADDRINUSE')) return { ok: false, error: msg }
+    }
+  }
+  return { ok: true, port: RELAY_PORT, ips: lanAddresses() }
 })
 ipcMain.on('quit-app', () => app.quit())

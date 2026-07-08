@@ -8,7 +8,7 @@ await build({
   platform: 'node',
   format: 'cjs',
   target: 'node20',
-  external: ['electron'],
+  external: ['electron', 'ws'],
 })
 
 await build({

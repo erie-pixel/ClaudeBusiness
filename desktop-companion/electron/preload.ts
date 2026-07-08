@@ -37,6 +37,7 @@ export interface CompanionBridge {
   saveSofa(sofa: SofaState): void
   saveLook(look: LookState): void
   saveMp(mp: { playerName: string; serverUrl: string }): void
+  ensureRelay(): Promise<{ ok: boolean; port?: number; ips?: string[]; error?: string }>
   hideWindow(): void
   quitApp(): void
 }
@@ -60,6 +61,7 @@ const bridge: CompanionBridge = {
   saveSofa: (sofa) => ipcRenderer.send('save-sofa', sofa),
   saveLook: (look) => ipcRenderer.send('save-look', look),
   saveMp: (mp) => ipcRenderer.send('save-mp', mp),
+  ensureRelay: () => ipcRenderer.invoke('ensure-relay'),
   setInteractive: (v) => ipcRenderer.send('set-interactive', v),
   setPollRate: (active) => ipcRenderer.send('set-poll-rate', active),
   hideWindow: () => ipcRenderer.send('hide-window'),

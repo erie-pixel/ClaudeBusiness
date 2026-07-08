@@ -154,6 +154,11 @@ const roomLog: Array<{ name: string; text: string; ts: number }> = []
 const peerEmotes = new Map<string, { text: string; timer: number }>()
 /** 예기치 않은 끊김 시 자동 재접속 */
 const reconnect = { code: null as string | null, attempts: 0, timer: 0 }
+/** 현재 세션이 실제로 접속한 주소 (호스트면 로컬, 참여면 입력한 주소) */
+let activeUrl = ''
+/** 내가 호스트일 때 친구에게 알려줄 접속 주소들 */
+let hostIps: string[] = []
+let hosting = false
 
 // 피어 look별 프레임 캐시 (커스터마이징 반영)
 const peerFramesCache = new Map<string, Record<FrameName, BakedFrame>>()
@@ -245,6 +250,8 @@ function leaveRoom() {
   net.disconnect()
   roomCode = null
   reconnect.code = null
+  hosting = false
+  hostIps = []
   peers.reset()
   clearBubbles()
   peerEmotes.clear()
@@ -265,7 +272,7 @@ function tickReconnect(dt: number) {
   reconnect.timer = 999 // 결과(onJoined/onClose/onError)가 다음 스텝을 정한다
   netNotice = `재접속 중… (${reconnect.attempts}/5)`
   refreshMpPanel()
-  net.connectAnd(serverUrl, reconnect.code, playerName, look)
+  net.connectAnd(activeUrl || serverUrl, reconnect.code, playerName, look)
 }
 
 // 상태 전송 스로틀 (변화가 있을 때만, 최대 5Hz)
@@ -735,7 +742,7 @@ function buildMp() {
   mp.appendChild(nameRow)
 
   const svRow = el('div', 'w-row')
-  svRow.appendChild(el('span', '', '서버'))
+  svRow.appendChild(el('span', '', '참여 서버'))
   const svInput = document.createElement('input')
   svInput.className = 'w-input'
   svInput.value = serverUrl
@@ -750,12 +757,22 @@ function buildMp() {
 
   if (!roomCode) {
     const btnRow = el('div', 'w-row')
-    const createBtn = el('button', 'w-btn', '방 만들기')
-    createBtn.addEventListener('click', () => {
+    const createBtn = el('button', 'w-btn', '방 만들기 (내 PC가 호스트)')
+    createBtn.addEventListener('click', async () => {
       saveMpLocal()
-      netNotice = '접속 중…'
+      netNotice = '호스트 시작 중…'
       refreshMpPanel()
-      net.connectAnd(serverUrl, null, playerName, look)
+      // 서버가 앱에 내장 — 별도 실행 없이 여기서 바로 띄운다
+      const relay = await bridge.ensureRelay()
+      if (!relay.ok) {
+        netNotice = `호스트 시작 실패: ${relay.error ?? '?'}`
+        refreshMpPanel()
+        return
+      }
+      hosting = true
+      hostIps = relay.ips ?? []
+      activeUrl = `ws://127.0.0.1:${relay.port}`
+      net.connectAnd(activeUrl, null, playerName, look)
     })
     btnRow.appendChild(createBtn)
     mp.appendChild(btnRow)
@@ -773,7 +790,8 @@ function buildMp() {
       saveMpLocal()
       netNotice = '접속 중…'
       refreshMpPanel()
-      net.connectAnd(serverUrl, code, playerName, look)
+      activeUrl = serverUrl
+      net.connectAnd(activeUrl, code, playerName, look)
     })
     joinRow.appendChild(joinBtn)
     mp.appendChild(joinRow)
@@ -782,7 +800,22 @@ function buildMp() {
     codeRow.appendChild(el('span', '', '코드'))
     codeRow.appendChild(el('b', 'w-code', roomCode))
     mp.appendChild(codeRow)
-    mp.appendChild(el('div', 'w-note', '이 코드를 친구에게 알려주면 참여할 수 있어요'))
+    if (hosting) {
+      mp.appendChild(el('div', 'w-note', '코드와 함께 아래 서버 주소를 친구에게 알려주세요:'))
+      const addrs = hostIps.length > 0 ? hostIps : ['<내 IP를 확인해 주세요>']
+      for (const ip of addrs) {
+        mp.appendChild(el('div', 'w-note w-addr', `ws://${ip}:8787`))
+      }
+      mp.appendChild(
+        el(
+          'div',
+          'w-note',
+          '같은 와이파이면 위 주소 그대로, 다른 곳이면 Tailscale IP 또는 터널 주소 사용 (README 참고)',
+        ),
+      )
+    } else {
+      mp.appendChild(el('div', 'w-note', '이 코드를 친구에게 알려주면 참여할 수 있어요'))
+    }
 
     const names = [playerName + ' (나)', ...[...peers.peers.values()].map((p) => p.name)]
     mp.appendChild(el('div', 'w-note', '함께 있는 사람: ' + names.join(', ')))
