@@ -16,6 +16,8 @@ import {
   type BakedFrame,
 } from './engine/sprite'
 import { partsBySlot, type PartSlot } from './engine/parts'
+import { NetClient, type NetPeerInfo, type NetState } from './net/client'
+import { PeerStore, type Peer } from './net/peers'
 import type { CompanionBridge, SofaState } from '../electron/preload'
 
 declare global {
@@ -136,7 +138,118 @@ bridge.onSettings((s) => {
   sofa.x = s.sofa.x
   sofa.y = s.sofa.y
   applyLook(s.look)
+  playerName = s.playerName
+  serverUrl = s.serverUrl
 })
+
+// ---------- 멀티플레이 (Phase 3) ----------
+
+let playerName = '친구'
+let serverUrl = 'ws://127.0.0.1:8787'
+let roomCode: string | null = null
+let netNotice = '' // mp 패널에 표시할 상태/오류 메시지
+const peers = new PeerStore()
+const roomLog: Array<{ name: string; text: string; ts: number }> = []
+
+// 피어 look별 프레임 캐시 (커스터마이징 반영)
+const peerFramesCache = new Map<string, Record<FrameName, BakedFrame>>()
+function peerFrames(look: Look | null): Record<FrameName, BakedFrame> {
+  const key = JSON.stringify(look ?? DEFAULT_LOOK)
+  let baked = peerFramesCache.get(key)
+  if (!baked) {
+    baked = bakeAllFrames(look ?? DEFAULT_LOOK)
+    peerFramesCache.set(key, baked)
+  }
+  return baked
+}
+
+const NET_ERRORS: Record<string, string> = {
+  'no-room': '그 코드의 방이 없어요',
+  'room-full': '방이 가득 찼어요 (최대 4명)',
+  'already-in': '이미 그 방에 있어요',
+}
+
+const net = new NetClient({
+  onJoined(room, _self, infos) {
+    roomCode = room
+    netNotice = ''
+    peers.reset()
+    for (const info of infos) peers.upsert(info)
+    char.messages.push('!')
+    refreshMpPanel()
+  },
+  onPeerJoin(info: NetPeerInfo) {
+    peers.upsert(info)
+    char.messages.push('!')
+    pushLog('알림', `${info.name} 님이 왔어요`)
+    refreshMpPanel()
+  },
+  onPeerLeave(id) {
+    const name = peers.peers.get(id)?.name ?? '?'
+    peers.remove(id)
+    removeBubble(id)
+    pushLog('알림', `${name} 님이 떠났어요`)
+    refreshMpPanel()
+  },
+  onPeerState(id, state: NetState) {
+    peers.updateState(id, state)
+  },
+  onChat(id, name, text) {
+    pushLog(name, text)
+    showBubble(id, text)
+  },
+  onError(code) {
+    netNotice = NET_ERRORS[code] ?? `오류: ${code}`
+    refreshMpPanel()
+  },
+  onClose() {
+    if (roomCode) {
+      roomCode = null
+      peers.reset()
+      clearBubbles()
+      netNotice = '연결이 끊겼어요'
+      char.messages.push('…')
+      refreshMpPanel()
+    }
+  },
+})
+
+function pushLog(name: string, text: string) {
+  roomLog.push({ name, text, ts: Date.now() })
+  if (roomLog.length > 100) roomLog.shift()
+  if (historyOpen) buildHistory()
+}
+
+function leaveRoom() {
+  net.disconnect()
+  roomCode = null
+  peers.reset()
+  clearBubbles()
+  refreshMpPanel()
+}
+
+// 상태 전송 스로틀 (변화가 있을 때만, 최대 5Hz)
+let netAccum = 0
+let lastSentState = ''
+function maybeSendState(dt: number) {
+  if (!roomCode || !net.connected) return
+  netAccum += dt
+  if (netAccum < 0.2) return
+  netAccum = 0
+  const state: NetState = {
+    nx: Math.round((char.x / canvas.width) * 1000) / 1000,
+    ny: Math.round((char.y / canvas.height) * 1000) / 1000,
+    pose: char.pose,
+    facing: char.facing,
+  }
+  const key = JSON.stringify(state)
+  if (key === lastSentState) return
+  lastSentState = key
+  net.sendState(state)
+}
+
+// 근접 인사 — 옆에 친구 캐릭터가 오면 가끔 반가워함
+let greetCooldown = 5
 
 // 사용자 활동 감지 (Co-work/방치 리액션)
 let lastCursorMoveAt = 0
@@ -154,6 +267,9 @@ bridge.onUserInput((input) => {
 let interactive = false
 let menuOpen = false
 let wardrobeOpen = false
+let mpOpen = false
+let historyOpen = false
+let chatOpen = false
 /** 캐릭터 드래그: mousedown만으로는 잡지 않고, 실제로 끌기 시작해야 집는다 */
 let pendingGrab: { x: number; y: number } | null = null
 let dragging = false
@@ -179,11 +295,15 @@ function syncInteractive(cursor: { x: number; y: number }) {
   const want =
     menuOpen ||
     wardrobeOpen ||
+    mpOpen ||
+    historyOpen ||
+    chatOpen ||
     dragging ||
     sofaDragging ||
     pendingGrab !== null ||
     overCharacter(cursor.x, cursor.y) ||
-    overSofa(cursor.x, cursor.y)
+    overSofa(cursor.x, cursor.y) ||
+    peers.near(cursor.x, cursor.y, W / 2) !== null
   if (want !== interactive) {
     interactive = want
     bridge.setInteractive(want)
@@ -308,6 +428,13 @@ function buildMenu() {
     { label: '쓰다듬기', action: () => char.poke() },
     'sep',
     { label: '옷장 열기…', action: () => openWardrobe() },
+    { label: roomCode ? `친구들 (${peers.peers.size + 1}명 접속)…` : '친구들…', action: () => openMp() },
+    ...(roomCode
+      ? [
+          { label: '채팅하기 (Ctrl+Shift+Space)', action: () => openChat() },
+          { label: '대화 기록', action: () => openHistory() },
+        ]
+      : []),
     sofa.enabled
       ? {
           label: '소파 치우기',
@@ -381,7 +508,7 @@ window.addEventListener('click', (e) => {
   // 그리면(innerHTML 교체) 이 핸들러 시점에는 target이 이미 DOM에서 떨어져
   // contains()가 false가 되어 옷장이 클릭할 때마다 닫혀버린다.
   const path = e.composedPath()
-  if (path.includes(menu) || path.includes(wardrobe)) return
+  if (path.includes(menu) || path.includes(wardrobe) || path.includes(mp) || path.includes(history) || path.includes(chatWrap)) return
   if (menuOpen) {
     closeMenu()
     return
@@ -390,7 +517,20 @@ window.addEventListener('click', (e) => {
     closeWardrobe()
     return
   }
-  if (overCharacter(e.clientX, e.clientY)) char.poke()
+  if (mpOpen) {
+    closeMp()
+    return
+  }
+  if (historyOpen) {
+    closeHistory()
+    return
+  }
+  if (overCharacter(e.clientX, e.clientY)) {
+    char.poke()
+    return
+  }
+  // 친구 캐릭터 클릭 → 대화 기록
+  if (roomCode && peers.near(e.clientX, e.clientY - H / 2, W) !== null) openHistory()
 })
 
 // ---------- 옷장 (Phase 2: 색 커스터마이징) ----------
@@ -522,6 +662,253 @@ function closeWardrobe() {
   if (world.cursor) syncInteractive(world.cursor)
 }
 
+// ---------- 멀티플레이 UI: 친구들 패널 / 채팅 / 기록 / 말풍선 ----------
+
+const mp = document.getElementById('mp') as HTMLDivElement
+const history = document.getElementById('history') as HTMLDivElement
+const chatWrap = document.getElementById('chat') as HTMLDivElement
+const chatInput = chatWrap.querySelector('input') as HTMLInputElement
+const bubblesWrap = document.getElementById('bubbles') as HTMLDivElement
+
+function el(tag: string, cls: string, text?: string): HTMLElement {
+  const node = document.createElement(tag)
+  node.className = cls
+  if (text !== undefined) node.textContent = text
+  return node
+}
+
+function refreshMpPanel() {
+  if (mpOpen) buildMp()
+}
+
+function buildMp() {
+  mp.innerHTML = ''
+  mp.appendChild(el('div', 'w-title', '친구들 (최대 4명)'))
+
+  const nameRow = el('div', 'w-row')
+  nameRow.appendChild(el('span', '', '이름'))
+  const nameInput = document.createElement('input')
+  nameInput.className = 'w-input'
+  nameInput.maxLength = 20
+  nameInput.value = playerName
+  nameRow.appendChild(nameInput)
+  mp.appendChild(nameRow)
+
+  const svRow = el('div', 'w-row')
+  svRow.appendChild(el('span', '', '서버'))
+  const svInput = document.createElement('input')
+  svInput.className = 'w-input'
+  svInput.value = serverUrl
+  svRow.appendChild(svInput)
+  mp.appendChild(svRow)
+
+  const saveMpLocal = () => {
+    playerName = nameInput.value.trim() || '친구'
+    serverUrl = svInput.value.trim() || serverUrl
+    bridge.saveMp({ playerName, serverUrl })
+  }
+
+  if (!roomCode) {
+    const btnRow = el('div', 'w-row')
+    const createBtn = el('button', 'w-btn', '방 만들기')
+    createBtn.addEventListener('click', () => {
+      saveMpLocal()
+      netNotice = '접속 중…'
+      refreshMpPanel()
+      net.connectAnd(serverUrl, null, playerName, look)
+    })
+    btnRow.appendChild(createBtn)
+    mp.appendChild(btnRow)
+
+    const joinRow = el('div', 'w-row')
+    const codeInput = document.createElement('input')
+    codeInput.className = 'w-input'
+    codeInput.placeholder = '초대 코드'
+    codeInput.maxLength = 6
+    joinRow.appendChild(codeInput)
+    const joinBtn = el('button', 'w-btn', '참여')
+    joinBtn.addEventListener('click', () => {
+      const code = codeInput.value.trim().toUpperCase()
+      if (!code) return
+      saveMpLocal()
+      netNotice = '접속 중…'
+      refreshMpPanel()
+      net.connectAnd(serverUrl, code, playerName, look)
+    })
+    joinRow.appendChild(joinBtn)
+    mp.appendChild(joinRow)
+  } else {
+    const codeRow = el('div', 'w-row')
+    codeRow.appendChild(el('span', '', '코드'))
+    codeRow.appendChild(el('b', 'w-code', roomCode))
+    mp.appendChild(codeRow)
+    mp.appendChild(el('div', 'w-note', '이 코드를 친구에게 알려주면 참여할 수 있어요'))
+
+    const names = [playerName + ' (나)', ...[...peers.peers.values()].map((p) => p.name)]
+    mp.appendChild(el('div', 'w-note', '함께 있는 사람: ' + names.join(', ')))
+
+    const leaveBtn = el('button', 'w-btn', '방 나가기')
+    leaveBtn.addEventListener('click', () => {
+      leaveRoom()
+      refreshMpPanel()
+    })
+    mp.appendChild(leaveBtn)
+  }
+
+  if (netNotice) mp.appendChild(el('div', 'w-note w-alert', netNotice))
+
+  const close = el('div', 'item w-close', '닫기')
+  close.addEventListener('click', closeMp)
+  mp.appendChild(close)
+}
+
+function openMp() {
+  buildMp()
+  mpOpen = true
+  mp.style.display = 'block'
+  mp.style.left = `${Math.min(Math.max(8, char.x - 110), canvas.width - 240)}px`
+  mp.style.top = `${Math.min(Math.max(8, char.y - H - 240), canvas.height - 280)}px`
+  bridge.setInteractive(true)
+  interactive = true
+}
+
+function closeMp() {
+  if (!mpOpen) return
+  mpOpen = false
+  mp.style.display = 'none'
+  if (world.cursor) syncInteractive(world.cursor)
+}
+
+function buildHistory() {
+  history.innerHTML = ''
+  history.appendChild(el('div', 'w-title', '대화 기록'))
+  const list = el('div', 'h-list')
+  for (const entry of roomLog.slice(-60)) {
+    const t = new Date(entry.ts)
+    const hh = String(t.getHours()).padStart(2, '0')
+    const mm = String(t.getMinutes()).padStart(2, '0')
+    const row = el('div', 'h-row')
+    row.appendChild(el('span', 'h-time', `${hh}:${mm}`))
+    row.appendChild(el('span', 'h-name', entry.name))
+    row.appendChild(el('span', 'h-text', entry.text))
+    list.appendChild(row)
+  }
+  if (roomLog.length === 0) list.appendChild(el('div', 'w-note', '아직 대화가 없어요'))
+  history.appendChild(list)
+  const close = el('div', 'item w-close', '닫기')
+  close.addEventListener('click', closeHistory)
+  history.appendChild(close)
+  list.scrollTop = list.scrollHeight
+}
+
+function openHistory() {
+  buildHistory()
+  historyOpen = true
+  history.style.display = 'block'
+  history.style.left = `${Math.min(Math.max(8, char.x + W), canvas.width - 280)}px`
+  history.style.top = `${Math.min(Math.max(8, char.y - H - 160), canvas.height - 260)}px`
+  bridge.setInteractive(true)
+  interactive = true
+}
+
+function closeHistory() {
+  if (!historyOpen) return
+  historyOpen = false
+  history.style.display = 'none'
+  if (world.cursor) syncInteractive(world.cursor)
+}
+
+function openChat() {
+  if (!roomCode) {
+    openMp()
+    return
+  }
+  chatOpen = true
+  chatWrap.style.display = 'block'
+  positionChat()
+  bridge.setInteractive(true)
+  interactive = true
+  chatInput.value = ''
+  chatInput.focus()
+}
+
+function closeChat() {
+  if (!chatOpen) return
+  chatOpen = false
+  chatWrap.style.display = 'none'
+  chatInput.blur()
+  if (world.cursor) syncInteractive(world.cursor)
+}
+
+function positionChat() {
+  chatWrap.style.left = `${Math.min(Math.max(8, char.x - 110), canvas.width - 230)}px`
+  chatWrap.style.top = `${Math.max(8, char.y - H - 44)}px`
+}
+
+chatInput.addEventListener('keydown', (e) => {
+  e.stopPropagation()
+  if (e.key === 'Escape') closeChat()
+  if (e.key === 'Enter') {
+    const text = chatInput.value.trim().slice(0, 200)
+    if (text && roomCode) {
+      net.sendChat(text)
+      pushLog(playerName, text)
+      showBubble('me', text)
+    }
+    closeChat()
+  }
+})
+
+bridge.onOpenChat(() => openChat())
+
+// 말풍선 (채팅 전용 — 캐릭터 자체 의사표현은 이모트 심볼)
+const bubbles = new Map<string, { div: HTMLDivElement; timer: number }>()
+
+function showBubble(id: string, text: string) {
+  removeBubble(id)
+  const div = document.createElement('div')
+  div.className = 'chatbubble'
+  div.textContent = text
+  bubblesWrap.appendChild(div)
+  bubbles.set(id, { div, timer: Math.min(12, 5 + text.length * 0.06) })
+}
+
+function removeBubble(id: string) {
+  const b = bubbles.get(id)
+  if (b) {
+    b.div.remove()
+    bubbles.delete(id)
+  }
+}
+
+function clearBubbles() {
+  for (const id of [...bubbles.keys()]) removeBubble(id)
+}
+
+function updateBubbles(dt: number) {
+  for (const [id, b] of bubbles) {
+    b.timer -= dt
+    if (b.timer <= 0) {
+      removeBubble(id)
+      continue
+    }
+    let bx = char.x
+    let by = char.y
+    if (id !== 'me') {
+      const peer = peers.peers.get(id)
+      if (!peer || !peer.hasState) {
+        removeBubble(id)
+        continue
+      }
+      bx = peer.x
+      by = peer.y
+    }
+    b.div.style.left = `${bx}px`
+    b.div.style.top = `${by - H - 10}px`
+    b.div.style.opacity = b.timer < 0.6 ? String(b.timer / 0.6) : '1'
+  }
+}
+
 // ---------- 이모트 (텍스트 박스 없이 심볼만) ----------
 
 let emoteText: string | null = null
@@ -587,6 +974,57 @@ function currentFrame(): BakedFrame {
   }
 }
 
+function frameForPeer(peer: Peer): BakedFrame {
+  const baked = peerFrames(peer.look)
+  switch (peer.pose) {
+    case 'held':
+      return Math.floor(animTime * 8) % 2 === 0 ? baked.heldA : baked.heldB
+    case 'work':
+      return Math.floor(animTime * 4) % 2 === 0 ? baked.workA : baked.workB
+    case 'back':
+      return baked.back
+    case 'sit':
+      return baked.sit
+    case 'sleep':
+      return baked.sleep
+    case 'pant':
+      return baked.pant
+    case 'walk':
+      return Math.floor(animTime * 6) % 2 === 0 ? baked.walkA : baked.walkB
+    case 'run':
+      return Math.floor(animTime * 12) % 2 === 0 ? baked.walkA : baked.walkB
+    default:
+      return baked.idle
+  }
+}
+
+function drawPeer(peer: Peer) {
+  if (!peer.hasState || Number.isNaN(peer.x)) return
+  const frame = frameForPeer(peer)
+  const top = peer.y - H
+  ctx.save()
+  if (peer.pose === 'sleep') {
+    ctx.translate(peer.x, peer.y - W / 2)
+    ctx.rotate(peer.facing === 1 ? Math.PI / 2 : -Math.PI / 2)
+    ctx.drawImage(frame.canvas, -W / 2, -H / 2, W, H)
+  } else {
+    ctx.translate(peer.x, 0)
+    ctx.scale(peer.facing, 1)
+    ctx.drawImage(frame.canvas, -W / 2, top, W, H)
+  }
+  ctx.restore()
+  // 이름표 (발 아래, 은은하게)
+  ctx.save()
+  ctx.font = '10px monospace'
+  ctx.textAlign = 'center'
+  ctx.lineWidth = 3
+  ctx.strokeStyle = 'rgba(20,22,32,0.7)'
+  ctx.fillStyle = 'rgba(230,232,245,0.85)'
+  ctx.strokeText(peer.name, peer.x, peer.y + 12)
+  ctx.fillText(peer.name, peer.x, peer.y + 12)
+  ctx.restore()
+}
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height)
 
@@ -595,6 +1033,9 @@ function draw() {
     const r = sofaRect()
     ctx.drawImage(sofaSprite.canvas, r.x, r.y, r.w, r.h)
   }
+
+  // 친구 캐릭터들 (내 캐릭터보다 뒤에)
+  for (const peer of peers.peers.values()) drawPeer(peer)
 
   const frame = currentFrame()
   const top = char.y - H
@@ -661,6 +1102,23 @@ function loop(now: number) {
   world.userIdleSec = watcherIdleSec
   char.update(dt, world)
   updateEmote(dt)
+
+  // 멀티플레이: 피어 보간, 상태 전송, 말풍선 위치, 근접 인사
+  if (roomCode) {
+    peers.tick(dt, canvas.width, canvas.height)
+    maybeSendState(dt)
+    greetCooldown -= dt
+    if (greetCooldown <= 0) {
+      if (peers.near(char.x, char.y, 70)) {
+        char.messages.push('♪')
+        greetCooldown = 25 + Math.random() * 25
+      } else {
+        greetCooldown = 3
+      }
+    }
+    if (chatOpen) positionChat()
+  }
+  updateBubbles(dt)
 
   // 따라다니거나 집혀 있는 동안만 커서 폴링을 고빈도로 (CPU 예산)
   const wantActive =

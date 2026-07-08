@@ -22,6 +22,8 @@ export interface RendererSettings {
   activity: 'calm' | 'normal' | 'active'
   sofa: SofaState
   look: LookState
+  playerName: string
+  serverUrl: string
 }
 
 export interface CompanionBridge {
@@ -29,10 +31,12 @@ export interface CompanionBridge {
   onActiveWindow(cb: (rect: { x: number; y: number; w: number; h: number }) => void): void
   onUserInput(cb: (input: { typing: boolean; idleSec: number }) => void): void
   onSettings(cb: (s: RendererSettings) => void): void
+  onOpenChat(cb: () => void): void
   setInteractive(interactive: boolean): void
   setPollRate(active: boolean): void
   saveSofa(sofa: SofaState): void
   saveLook(look: LookState): void
+  saveMp(mp: { playerName: string; serverUrl: string }): void
   hideWindow(): void
   quitApp(): void
 }
@@ -50,8 +54,12 @@ const bridge: CompanionBridge = {
   onSettings: (cb) => {
     ipcRenderer.on('settings', (_e, s) => cb(s))
   },
+  onOpenChat: (cb) => {
+    ipcRenderer.on('open-chat', () => cb())
+  },
   saveSofa: (sofa) => ipcRenderer.send('save-sofa', sofa),
   saveLook: (look) => ipcRenderer.send('save-look', look),
+  saveMp: (mp) => ipcRenderer.send('save-mp', mp),
   setInteractive: (v) => ipcRenderer.send('set-interactive', v),
   setPollRate: (active) => ipcRenderer.send('set-poll-rate', active),
   hideWindow: () => ipcRenderer.send('hide-window'),

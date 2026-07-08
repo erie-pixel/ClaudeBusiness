@@ -139,12 +139,162 @@
         background: #5b8bd9;
         color: #fff;
       }
+      /* 친구들/기록 패널 — 옷장과 같은 픽셀 스타일 */
+      #mp,
+      #history {
+        display: none;
+        position: absolute;
+        min-width: 210px;
+        max-width: 270px;
+        background: #1d1f2b;
+        border: 3px solid #454a66;
+        box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        font-weight: bold;
+        color: #e8e9f5;
+        padding: 8px;
+        image-rendering: pixelated;
+      }
+      #mp .w-title,
+      #history .w-title {
+        font-size: 13px;
+        margin-bottom: 8px;
+        color: #aab0cc;
+      }
+      #mp .w-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 7px;
+      }
+      #mp .w-row span {
+        width: 34px;
+        color: #aab0cc;
+      }
+      .w-input {
+        flex: 1;
+        min-width: 0;
+        background: #10121b;
+        border: 2px solid #454a66;
+        color: #e8e9f5;
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: bold;
+        padding: 4px 6px;
+      }
+      .w-btn {
+        background: #2b2e40;
+        border: 2px solid #454a66;
+        color: #e8e9f5;
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: bold;
+        cursor: pointer;
+        padding: 5px 10px;
+      }
+      .w-btn:hover {
+        background: #5b8bd9;
+      }
+      .w-code {
+        font-size: 16px;
+        letter-spacing: 3px;
+        color: #ffd76a;
+      }
+      .w-note {
+        color: #8a90ad;
+        font-size: 11px;
+        margin: 4px 0 8px;
+        font-weight: normal;
+      }
+      .w-alert {
+        color: #ff9a9a;
+      }
+      #mp .w-close,
+      #history .w-close {
+        margin-top: 4px;
+        text-align: center;
+        padding: 5px;
+        cursor: pointer;
+      }
+      #mp .w-close:hover,
+      #history .w-close:hover {
+        background: #5b8bd9;
+        color: #fff;
+      }
+      .h-list {
+        max-height: 180px;
+        overflow-y: auto;
+        margin-bottom: 4px;
+      }
+      .h-row {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 3px;
+        font-weight: normal;
+        font-size: 11px;
+      }
+      .h-time {
+        color: #666d8c;
+      }
+      .h-name {
+        color: #8fb4e8;
+        flex-shrink: 0;
+      }
+      .h-text {
+        color: #e8e9f5;
+        word-break: break-all;
+      }
+      /* 채팅 입력 */
+      #chat {
+        display: none;
+        position: absolute;
+        width: 220px;
+        background: #1d1f2b;
+        border: 3px solid #454a66;
+        box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
+        padding: 5px;
+        image-rendering: pixelated;
+      }
+      #chat input {
+        width: 100%;
+        box-sizing: border-box;
+        background: #10121b;
+        border: 2px solid #5b8bd9;
+        color: #e8e9f5;
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        font-weight: bold;
+        padding: 5px 7px;
+        outline: none;
+      }
+      /* 채팅 말풍선 (친구 대화용 — 캐릭터 이모트와 별개) */
+      .chatbubble {
+        position: absolute;
+        transform: translate(-50%, -100%);
+        max-width: 220px;
+        background: #fdfdf6;
+        color: #22242f;
+        border: 3px solid #22242f;
+        box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.35);
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        font-weight: bold;
+        padding: 5px 9px;
+        pointer-events: none;
+        word-break: break-all;
+        image-rendering: pixelated;
+      }
     </style>
   </head>
   <body>
     <canvas id="stage"></canvas>
+    <div id="bubbles"></div>
     <div id="menu"></div>
     <div id="wardrobe"></div>
+    <div id="mp"></div>
+    <div id="history"></div>
+    <div id="chat"><input type="text" maxlength="200" placeholder="메시지 입력 후 Enter" /></div>
     <script src="./renderer.js"></script>
   </body>
 </html>

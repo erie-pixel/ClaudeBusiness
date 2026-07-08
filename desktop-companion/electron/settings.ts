@@ -39,6 +39,10 @@ export interface AppSettings {
   sofa: SofaSettings
   /** 캐릭터 색 커스터마이징 (옷장) */
   look: LookSettings
+  /** 멀티플레이 표시 이름 */
+  playerName: string
+  /** relay 서버 주소 */
+  serverUrl: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -57,6 +61,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     mouthStyle: 'smile',
     topStyle: 'tee',
   },
+  playerName: '친구',
+  serverUrl: 'ws://127.0.0.1:8787',
 }
 
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json')

@@ -9,9 +9,13 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "server": "node server/index.mjs",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "test": "vitest run",
     "start": "npm run build && electron ."
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

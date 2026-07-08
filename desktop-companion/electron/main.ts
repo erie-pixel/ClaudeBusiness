@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage } from 'electron'
+import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage, globalShortcut } from 'electron'
 import * as path from 'node:path'
 import { startFullscreenWatcher, stopFullscreenWatcher } from './fullscreen-win'
 import { loadSettings, saveSettings, type AppSettings } from './settings'
@@ -22,6 +22,8 @@ let settings: AppSettings = {
     mouthStyle: 'smile',
     topStyle: 'tee',
   },
+  playerName: '친구',
+  serverUrl: 'ws://127.0.0.1:8787',
 }
 
 function pushSettings() {
@@ -31,6 +33,8 @@ function pushSettings() {
     activity: settings.activity,
     sofa: settings.sofa,
     look: settings.look,
+    playerName: settings.playerName,
+    serverUrl: settings.serverUrl,
   })
 }
 
@@ -232,6 +236,10 @@ app.whenReady().then(() => {
   applyAutoStart()
   createWindow()
   createTray()
+  // 채팅 전역 단축키 (방에 있을 때 렌더러가 입력창을 연다)
+  globalShortcut.register('CommandOrControl+Shift+Space', () => {
+    win?.webContents.send('open-chat')
+  })
   // 전체화면 앱(유튜브 전체화면, 게임 등) 감지 시 캐릭터 자동 숨김 — 방해하지 않음 원칙
   // + 활성 창 rect를 렌더러에 전달해 "창 쳐다보기" 행동 발동
   let lastRectKey = ''
@@ -275,6 +283,10 @@ app.on('before-quit', () => {
   stopFullscreenWatcher()
 })
 
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
+})
+
 ipcMain.on('set-interactive', (_e, interactive: boolean) => {
   win?.setIgnoreMouseEvents(!interactive, { forward: true })
 })
@@ -294,5 +306,12 @@ ipcMain.on('save-sofa', (_e, sofa: AppSettings['sofa']) => {
 
 ipcMain.on('save-look', (_e, look: AppSettings['look']) => {
   updateSettings({ look })
+})
+
+ipcMain.on('save-mp', (_e, mp: { playerName: string; serverUrl: string }) => {
+  updateSettings({
+    playerName: String(mp.playerName ?? '친구').slice(0, 20),
+    serverUrl: String(mp.serverUrl ?? ''),
+  })
 })
 ipcMain.on('quit-app', () => app.quit())
