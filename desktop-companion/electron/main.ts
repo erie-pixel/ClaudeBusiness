@@ -1,9 +1,23 @@
 import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage } from 'electron'
 import * as path from 'node:path'
+import { startFullscreenWatcher, stopFullscreenWatcher } from './fullscreen-win'
 
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
 let cursorTimer: NodeJS.Timeout | null = null
+
+// 숨김 사유를 분리 관리: 사용자가 직접 숨긴 것과 전체화면 자동 숨김은 독립적
+let manualHidden = false
+let fullscreenHidden = false
+
+function applyVisibility() {
+  if (!win || win.isDestroyed()) return
+  if (manualHidden || fullscreenHidden) {
+    if (win.isVisible()) win.hide()
+  } else {
+    if (!win.isVisible()) win.showInactive()
+  }
+}
 
 // 상호작용 모드 폴링 주기(Hz). 캐릭터가 커서를 따라다닐 때는 촘촘히,
 // 유휴 상태에서는 느슨하게 돌려 CPU 예산(<1~2%)을 지킨다.
@@ -94,8 +108,8 @@ function createTray() {
       {
         label: '캐릭터 보이기/숨기기',
         click: () => {
-          if (!win) return
-          win.isVisible() ? win.hide() : win.showInactive()
+          manualHidden = !manualHidden
+          applyVisibility()
         },
       },
       { type: 'separator' },
@@ -109,11 +123,17 @@ app.whenReady().then(() => {
   app.dock?.hide()
   createWindow()
   createTray()
+  // 전체화면 앱(유튜브 전체화면, 게임 등) 감지 시 캐릭터 자동 숨김 — 방해하지 않음 원칙
+  startFullscreenWatcher((fs) => {
+    fullscreenHidden = fs
+    applyVisibility()
+  })
 })
 
 app.on('window-all-closed', () => app.quit())
 app.on('before-quit', () => {
   if (cursorTimer) clearTimeout(cursorTimer)
+  stopFullscreenWatcher()
 })
 
 ipcMain.on('set-interactive', (_e, interactive: boolean) => {
@@ -124,5 +144,8 @@ ipcMain.on('set-poll-rate', (_e, active: boolean) => {
   pollMs = active ? POLL_ACTIVE_MS : POLL_IDLE_MS
 })
 
-ipcMain.on('hide-window', () => win?.hide())
+ipcMain.on('hide-window', () => {
+  manualHidden = true
+  applyVisibility()
+})
 ipcMain.on('quit-app', () => app.quit())

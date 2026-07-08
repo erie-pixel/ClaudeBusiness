@@ -40,14 +40,20 @@ const frames: Record<FrameName, BakedFrame> = {
 }
 const heart = bakeMap(HEART, 7, 6)
 
-const FLOOR_MARGIN = 4
+const EDGE = 4
+function computeBounds() {
+  return {
+    minX: (SPRITE_W * SCALE) / 2 + EDGE,
+    maxX: canvas.width - (SPRITE_W * SCALE) / 2 - EDGE,
+    minY: SPRITE_H * SCALE + EDGE, // 발 기준 — 머리가 화면 위로 나가지 않게
+    maxY: canvas.height - EDGE,
+  }
+}
 const world = {
   cursor: null as { x: number; y: number } | null,
-  floorY: canvas.height - FLOOR_MARGIN,
-  minX: SPRITE_W * SCALE,
-  maxX: canvas.width - SPRITE_W * SCALE,
+  bounds: computeBounds(),
 }
-const char = new Character(canvas.width / 2)
+const char = new Character(canvas.width / 2, canvas.height * 0.7)
 
 // ---------- 클릭통과 <-> 상호작용 전환 ----------
 
@@ -58,7 +64,7 @@ let menuOpen = false
 function overCharacter(px: number, py: number): boolean {
   const frame = currentFrame()
   const left = char.x - (SPRITE_W * SCALE) / 2
-  const top = world.floorY - SPRITE_H * SCALE
+  const top = char.y - SPRITE_H * SCALE
   const fx = Math.floor((px - left) / SCALE)
   const fy = Math.floor((py - top) / SCALE)
   if (fx < 0 || fx >= SPRITE_W || fy < 0 || fy >= SPRITE_H) return false
@@ -173,12 +179,12 @@ function draw() {
   const frame = currentFrame()
   const w = SPRITE_W * SCALE
   const h = SPRITE_H * SCALE
-  const top = world.floorY - h
+  const top = char.y - h
 
   ctx.save()
   if (char.pose === 'sleep') {
     // 눕혀서 잠자기
-    ctx.translate(char.x, world.floorY - w / 2)
+    ctx.translate(char.x, char.y - w / 2)
     ctx.rotate(char.facing === 1 ? Math.PI / 2 : -Math.PI / 2)
     ctx.drawImage(frame.canvas, -w / 2, -h / 2, w, h)
   } else {
@@ -201,7 +207,7 @@ function draw() {
     ctx.fillStyle = '#cfd8ff'
     ctx.font = `bold ${8 * SCALE}px monospace`
     const phase = Math.floor(animTime) % 3
-    ctx.fillText('z'.repeat(phase + 1).toUpperCase(), char.x + 20, world.floorY - h + 6)
+    ctx.fillText('z'.repeat(phase + 1).toUpperCase(), char.x + 20, char.y - h + 6)
   }
   if (char.pose === 'pant') {
     ctx.fillStyle = '#7fd4f0'
@@ -220,8 +226,7 @@ function loop(now: number) {
   blinkTimer -= dt
   if (blinkTimer < 0) blinkTimer = 2 + Math.random() * 3
 
-  world.floorY = canvas.height - FLOOR_MARGIN
-  world.maxX = canvas.width - SPRITE_W * SCALE
+  world.bounds = computeBounds()
   char.update(dt, world)
 
   // 따라다니는 동안만 커서 폴링을 고빈도로 (CPU 예산)

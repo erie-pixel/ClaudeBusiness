@@ -1,5 +1,6 @@
 // 캐릭터 행동 엔진 — 렌더러/Electron에 의존하지 않는 순수 로직.
 // 기획서 §3.2 FSM: 사용자 명령 > 스탯 임계값 > 유틸리티(랜덤) 순으로 전이가 결정된다.
+// 이동은 화면 전체를 자유롭게 다니는 2D (횡스크롤 바닥 라인 아님).
 
 export type StateName =
   | 'idle'
@@ -9,13 +10,18 @@ export type StateName =
   | 'nap'
   | 'stay'
 
+export interface Bounds {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
 export interface World {
   /** 커서 위치 (창 좌표). 아직 커서 정보를 못 받았으면 null */
   cursor: { x: number; y: number } | null
-  /** 캐릭터가 서 있는 바닥 y (발 기준) */
-  floorY: number
-  minX: number
-  maxX: number
+  /** 캐릭터 발 위치가 다닐 수 있는 영역 */
+  bounds: Bounds
 }
 
 export interface CharacterConfig {
@@ -40,7 +46,7 @@ export const DEFAULT_CONFIG: CharacterConfig = {
   walkSpeed: 42,
   runSpeed: 150,
   runDistance: 420,
-  arriveDistance: 28,
+  arriveDistance: 36,
   staminaMax: 100,
   staminaRunDrain: 14,
   staminaRegen: 6,
@@ -55,20 +61,28 @@ export type Pose = 'idle' | 'walk' | 'run' | 'pant' | 'sleep'
 
 export class Character {
   x: number
+  y: number
   facing: 1 | -1 = 1
   state: StateName = 'wander'
   stamina: number
   running = false
+  moving = false
   /** 하트 이모트 잔여 시간 (쓰다듬기) */
   emoteTimer = 0
 
   private cfg: CharacterConfig
   private rng: () => number
-  private wanderTarget: number | null = null
+  private wanderTarget: { x: number; y: number } | null = null
   private pauseTimer = 0
 
-  constructor(x: number, cfg: CharacterConfig = DEFAULT_CONFIG, rng: () => number = Math.random) {
+  constructor(
+    x: number,
+    y: number,
+    cfg: CharacterConfig = DEFAULT_CONFIG,
+    rng: () => number = Math.random,
+  ) {
     this.x = x
+    this.y = y
     this.cfg = cfg
     this.rng = rng
     this.stamina = cfg.staminaMax
@@ -112,8 +126,6 @@ export class Character {
     }
   }
 
-  moving = false
-
   update(dt: number, world: World) {
     if (this.emoteTimer > 0) this.emoteTimer -= dt
     this.moving = false
@@ -148,27 +160,40 @@ export class Character {
         break
     }
 
-    this.x = Math.max(world.minX, Math.min(world.maxX, this.x))
+    const b = world.bounds
+    this.x = Math.max(b.minX, Math.min(b.maxX, this.x))
+    this.y = Math.max(b.minY, Math.min(b.maxY, this.y))
   }
 
   private regen(dt: number) {
     this.stamina = Math.min(this.cfg.staminaMax, this.stamina + this.cfg.staminaRegen * dt)
   }
 
+  /** 목표 지점으로 2D 직선 이동. 이동했으면 true */
+  private moveToward(tx: number, ty: number, speed: number, dt: number): boolean {
+    const dx = tx - this.x
+    const dy = ty - this.y
+    const dist = Math.hypot(dx, dy)
+    if (dist < 0.5) return false
+    const step = Math.min(speed * dt, dist)
+    this.x += (dx / dist) * step
+    this.y += (dy / dist) * step
+    // 수직 이동뿐일 때는 바라보는 방향 유지
+    if (Math.abs(dx) > 1) this.facing = dx > 0 ? 1 : -1
+    return true
+  }
+
   private updateFollow(dt: number, world: World) {
     if (!world.cursor) return
-    const dx = world.cursor.x - this.x
-    const dist = Math.abs(dx)
-    if (dist <= this.cfg.arriveDistance) return // 도착 — 옆에 서 있기
+    const dist = Math.hypot(world.cursor.x - this.x, world.cursor.y - this.y)
+    if (dist <= this.cfg.arriveDistance) return // 도착 — 커서 옆에 서 있기
 
-    this.facing = dx > 0 ? 1 : -1
     const wantRun = dist > this.cfg.runDistance && this.stamina > 0
     const speed = wantRun ? this.cfg.runSpeed : this.cfg.walkSpeed
-    this.x += Math.sign(dx) * Math.min(speed * dt, dist)
-    this.moving = true
-    this.running = wantRun
+    this.moving = this.moveToward(world.cursor.x, world.cursor.y, speed, dt)
+    this.running = wantRun && this.moving
 
-    if (wantRun) {
+    if (this.running) {
       this.stamina -= this.cfg.staminaRunDrain * dt
       if (this.stamina <= 0) {
         this.stamina = 0
@@ -178,12 +203,16 @@ export class Character {
   }
 
   private updateWander(dt: number, world: World) {
+    const b = world.bounds
     if (this.wanderTarget === null) {
-      this.wanderTarget = world.minX + this.rng() * (world.maxX - world.minX)
-      this.facing = this.wanderTarget > this.x ? 1 : -1
+      // 화면 어디든 자유롭게 — x, y 각각 랜덤 지점
+      this.wanderTarget = {
+        x: b.minX + this.rng() * (b.maxX - b.minX),
+        y: b.minY + this.rng() * (b.maxY - b.minY),
+      }
     }
-    const dx = this.wanderTarget - this.x
-    if (Math.abs(dx) <= 2) {
+    const t = this.wanderTarget
+    if (Math.hypot(t.x - this.x, t.y - this.y) <= 2) {
       // 도착 → 잠깐 쉬었다가 다음 목적지
       this.wanderTarget = null
       this.state = 'idle'
@@ -191,8 +220,6 @@ export class Character {
         this.cfg.wanderPauseMin + this.rng() * (this.cfg.wanderPauseMax - this.cfg.wanderPauseMin)
       return
     }
-    this.facing = dx > 0 ? 1 : -1
-    this.x += Math.sign(dx) * Math.min(this.cfg.walkSpeed * dt, Math.abs(dx))
-    this.moving = true
+    this.moving = this.moveToward(t.x, t.y, this.cfg.walkSpeed, dt)
   }
 }
