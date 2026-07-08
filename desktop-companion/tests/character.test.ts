@@ -7,6 +7,8 @@ const makeWorld = (cursorX: number | null = null, cursorY = CY): World => ({
   cursor: cursorX === null ? null : { x: cursorX, y: cursorY },
   bounds: { minX: 0, maxX: 2000, minY: 0, maxY: 1000 },
   userActive: false,
+  userIdleSec: 0,
+  home: null,
 })
 
 /** dt를 잘게 쪼개 seconds초 동안 시뮬레이션 */
@@ -155,7 +157,7 @@ describe('집어 옮기기 (held)', () => {
     char.grab()
     expect(char.state).toBe('held')
     expect(char.pose).toBe('held')
-    expect(char.messages).toContain('으앗?!')
+    expect(char.messages).toContain('!?')
     // held 중에는 update가 이동시키지 않는다 (커서가 멀어도)
     simulate(char, world, 2)
     expect(char.x).toBe(100)
@@ -193,7 +195,7 @@ describe('스탯 시스템', () => {
     char.feed()
     expect(char.hunger).toBe(90 - DEFAULT_CONFIG.hungerFeedRelief)
     expect(char.mood).toBeGreaterThan(moodBefore)
-    expect(char.messages).toContain('냠냠!')
+    expect(char.messages).toContain('♪')
   })
 
   it('배가 고프면 조르는 말풍선을 띄운다', () => {
@@ -201,7 +203,7 @@ describe('스탯 시스템', () => {
     char.hunger = 95
     char.commandStay()
     simulate(char, makeWorld(), 1)
-    expect(char.messages).toContain('배고파…')
+    expect(char.messages).toContain('~?')
   })
 
   it('졸림이 임계값을 넘으면 스스로 낮잠을 자고, 자고 나면 깬다', () => {
@@ -250,14 +252,14 @@ describe('같이 일하기 (cowork)', () => {
     world.userActive = true
     simulate(char, world, 4)
     expect(char.state).toBe('cowork')
-    expect(char.messages).toContain('나도 일할래!')
+    expect(char.messages).toContain('!')
     simulate(char, world, 20) // 자리(창 옆 +110)까지 걸어가 타이핑
     expect(char.pose).toBe('work')
     // 사용자가 손을 놓으면 grace 후 그만둠
     world.userActive = false
     simulate(char, world, cfg.coworkIdleGrace + 2)
     expect(char.state).not.toBe('cowork')
-    expect(char.messages).toContain('쉬는 거야?')
+    expect(char.messages).toContain('?')
   })
 
   it('예정된 시간이 끝나면 스스로 마무리한다', () => {
@@ -277,7 +279,74 @@ describe('같이 일하기 (cowork)', () => {
     expect(char.state).toBe('cowork')
     simulate(char, world, 15)
     expect(char.state).not.toBe('cowork')
-    expect(char.messages).toContain('오늘도 열일!')
+    expect(char.messages).toContain('♪')
+  })
+})
+
+describe('소파 / 홈 모드', () => {
+  const HOME = { x: 1000, y: 500, seatX: 1000, seatY: 520, radius: 240 }
+
+  it('배회 목적지가 소파 반경 안으로 제한된다', () => {
+    const char = new Character(1000, 500, DEFAULT_CONFIG, () => 0.99)
+    char.state = 'wander'
+    const world = makeWorld()
+    world.home = HOME
+    simulate(char, world, 120)
+    const dist = Math.hypot(char.x - HOME.x, char.y - HOME.y)
+    expect(dist).toBeLessThanOrEqual(HOME.radius + 5)
+  })
+
+  it('쉬는 시간이 끝나면 종종 소파에 가서 앉는다', () => {
+    // rng 0.1 < 0.45 → idle 종료 시 sit 선택
+    const char = new Character(900, 500, DEFAULT_CONFIG, () => 0.1)
+    char.state = 'idle'
+    const world = makeWorld()
+    world.home = HOME
+    simulate(char, world, 1)
+    expect(char.state).toBe('sit')
+    simulate(char, world, 10) // 자리까지 걸어가 앉음
+    expect(char.pose).toBe('sit')
+    expect(char.x).toBeCloseTo(HOME.seatX, 0)
+  })
+
+  it('앉아 있는데 소파가 치워지면 일어난다', () => {
+    const char = new Character(1000, 520, DEFAULT_CONFIG, () => 0.1)
+    char.state = 'sit'
+    const world = makeWorld()
+    world.home = null
+    char.update(1 / 60, world)
+    expect(char.state).toBe('idle')
+  })
+
+  it('홈 모드에서는 같이 일하기(cowork)도 발동하지 않는다', () => {
+    const cfg = { ...DEFAULT_CONFIG, coworkThreshold: 1, coworkChance: 1 }
+    const char = new Character(1000, 500, cfg, () => 0.99)
+    char.state = 'wander'
+    const world = makeWorld()
+    world.home = HOME
+    world.userActive = true
+    simulate(char, world, 5)
+    expect(char.state).not.toBe('cowork')
+  })
+})
+
+describe('사용자 방치 감지', () => {
+  it('사용자가 오래 자리를 비우면 갸웃(?)하고, 돌아오면 리셋된다', () => {
+    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.99)
+    char.commandStay()
+    const world = makeWorld()
+    world.userIdleSec = 120
+    char.state = 'idle'
+    char.update(1 / 60, world)
+    expect(char.messages).toContain('?')
+    char.messages.length = 0
+    char.update(1 / 60, world)
+    expect(char.messages).not.toContain('?') // 한 번만
+    world.userIdleSec = 0
+    char.update(1 / 60, world)
+    world.userIdleSec = 120
+    char.update(1 / 60, world)
+    expect(char.messages).toContain('?') // 새 방치 에피소드에 다시 반응
   })
 })
 
@@ -307,14 +376,23 @@ describe('창 쳐다보기 (watch)', () => {
     expect(char.x).toBeGreaterThan(0)
   })
 
-  it('구경이 끝나면 일상으로 돌아간다', () => {
-    const cfg = { ...DEFAULT_CONFIG, watchTimeMin: 0.5, watchTimeMax: 0.5 }
+  it('도착하면 뒤돌아서(back) 구경하고, 끝나면 일상으로 돌아간다', () => {
+    const cfg = { ...DEFAULT_CONFIG, watchTimeMin: 3, watchTimeMax: 3 }
     const char = new Character(490, 295, cfg, () => 0.1)
     char.state = 'idle'
     char.notifyActiveWindow({ x: 500, y: 300 })
     expect(char.state).toBe('watch')
-    simulate(char, makeWorld(), 5)
+    simulate(char, makeWorld(), 1.5) // 10px 거리 → 금방 도착, 구경 중
+    expect(char.pose).toBe('back') // 뒤돌아보기
+    simulate(char, makeWorld(), 4)
     expect(char.state === 'idle' || char.state === 'wander').toBe(true)
+  })
+
+  it('홈(소파) 모드에서는 구경하러 나가지 않는다', () => {
+    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.01)
+    char.state = 'idle'
+    char.notifyActiveWindow({ x: 500, y: 300 }, true) // homeMode
+    expect(char.state).toBe('idle')
   })
 
   it('따라오기 중에는 한눈팔지 않는다', () => {

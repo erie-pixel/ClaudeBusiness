@@ -9,14 +9,18 @@
 //  - Progman / WorkerW: 바탕화면 자체가 전면일 때 (항상 화면 전체 크기)
 //  - 우리 자신의 프로세스: 캐릭터 클릭으로 오버레이가 전면이 된 경우
 //
-// 출력 프로토콜: 상태 변화 시 한 줄 CSV → "fs,left,top,right,bottom"
+// 출력 프로토콜: 매 폴마다 한 줄 CSV → "fs,left,top,right,bottom,typing,idleSec"
 //   fs: 1=전체화면, 0=아님. 좌표는 전면 창 rect (제외 대상이면 0,0,0,0)
+//   typing: 직전 폴 이후 키보드 입력이 있었나 (어떤 키인지는 수집하지 않음 — boolean만)
+//   idleSec: 마지막 입력(키/마우스) 이후 경과 초 (GetLastInputInfo)
 
 import { spawn, type ChildProcess } from 'node:child_process'
 
 export interface ForegroundInfo {
   fullscreen: boolean
   rect: { left: number; top: number; right: number; bottom: number } | null
+  typing: boolean
+  idleSec: number
 }
 
 let child: ChildProcess | null = null
@@ -32,10 +36,26 @@ public static class FSNative {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+  [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO li);
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L; public int T; public int R; public int B; }
+  [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+  // 어떤 키가 눌렸는지는 보지 않는다 — "직전 폴 이후 타이핑이 있었나"의 boolean만 집계
+  public static bool TypedSinceLastPoll() {
+    bool t = false;
+    for (int vk = 0x30; vk <= 0x5A; vk++) { if ((GetAsyncKeyState(vk) & 1) != 0) t = true; }
+    int[] extra = { 0x20, 0x0D, 0x08, 0xBC, 0xBE, 0xBA, 0xDE };
+    foreach (int vk in extra) { if ((GetAsyncKeyState(vk) & 1) != 0) t = true; }
+    return t;
+  }
+  public static uint IdleSeconds() {
+    LASTINPUTINFO li = new LASTINPUTINFO();
+    li.cbSize = (uint)Marshal.SizeOf(li);
+    if (!GetLastInputInfo(ref li)) return 0;
+    return (uint)((Environment.TickCount - (int)li.dwTime) / 1000);
+  }
 }
 '@
-$prev = ''
 while ($true) {
   $line = '0,0,0,0,0'
   $h = [FSNative]::GetForegroundWindow()
@@ -56,7 +76,9 @@ while ($true) {
       $line = $fs + ',' + $r.L + ',' + $r.T + ',' + $r.R + ',' + $r.B
     }
   }
-  if ($line -ne $prev) { [Console]::Out.WriteLine($line); [Console]::Out.Flush(); $prev = $line }
+  $typing = if ([FSNative]::TypedSinceLastPoll()) { '1' } else { '0' }
+  $line = $line + ',' + $typing + ',' + [FSNative]::IdleSeconds()
+  [Console]::Out.WriteLine($line); [Console]::Out.Flush()
   Start-Sleep -Milliseconds 700
 }
 `.replace('OUR_PID', String(process.pid))
@@ -78,18 +100,20 @@ export function startFullscreenWatcher(onChange: (info: ForegroundInfo) => void)
       const line = buf.slice(0, idx).trim()
       buf = buf.slice(idx + 1)
       const parts = line.split(',').map(Number)
-      if (parts.length !== 5 || parts.some(Number.isNaN)) continue
-      const [fs, left, top, right, bottom] = parts
+      if (parts.length !== 7 || parts.some(Number.isNaN)) continue
+      const [fs, left, top, right, bottom, typing, idleSec] = parts
       const hasRect = right > left && bottom > top
       onChange({
         fullscreen: fs === 1,
         rect: hasRect ? { left, top, right, bottom } : null,
+        typing: typing === 1,
+        idleSec,
       })
     }
   })
 
   // 워처가 죽어도 앱은 계속 동작 (감지 기능만 우아하게 상실)
-  const degrade = () => onChange({ fullscreen: false, rect: null })
+  const degrade = () => onChange({ fullscreen: false, rect: null, typing: false, idleSec: 0 })
   child.on('error', degrade)
   child.on('exit', degrade)
 }

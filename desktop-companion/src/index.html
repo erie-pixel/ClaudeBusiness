@@ -68,29 +68,61 @@
       #menu .fill {
         height: 100%;
       }
-      #bubble {
+      #wardrobe {
         display: none;
         position: absolute;
-        transform: translate(-50%, -100%);
-        max-width: 220px;
-        background: #fdfdf6;
-        color: #22242f;
-        border: 3px solid #22242f;
-        box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.35);
+        min-width: 190px;
+        background: #1d1f2b;
+        border: 3px solid #454a66;
+        box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
         font-family: 'Courier New', monospace;
-        font-size: 13px;
+        font-size: 12px;
         font-weight: bold;
-        padding: 5px 9px;
-        white-space: nowrap;
-        pointer-events: none;
+        color: #e8e9f5;
+        padding: 8px;
         image-rendering: pixelated;
+      }
+      #wardrobe .w-title {
+        font-size: 13px;
+        margin-bottom: 8px;
+        color: #aab0cc;
+      }
+      #wardrobe .w-row {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-bottom: 7px;
+      }
+      #wardrobe .w-row span {
+        width: 34px;
+        color: #aab0cc;
+      }
+      #wardrobe .swatch {
+        width: 18px;
+        height: 18px;
+        border: 2px solid #454a66;
+        cursor: pointer;
+        padding: 0;
+      }
+      #wardrobe .swatch.active {
+        border-color: #fff;
+      }
+      #wardrobe .w-close {
+        margin-top: 4px;
+        text-align: center;
+        padding: 5px;
+        cursor: pointer;
+      }
+      #wardrobe .w-close:hover {
+        background: #5b8bd9;
+        color: #fff;
       }
     </style>
   </head>
   <body>
     <canvas id="stage"></canvas>
     <div id="menu"></div>
-    <div id="bubble"></div>
+    <div id="wardrobe"></div>
     <script src="./renderer.js"></script>
   </body>
 </html>

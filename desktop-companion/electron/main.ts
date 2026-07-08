@@ -6,11 +6,36 @@ import { loadSettings, saveSettings, type AppSettings } from './settings'
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
 let cursorTimer: NodeJS.Timeout | null = null
-let settings: AppSettings = { autoStart: false, scale: 2, activity: 'calm' }
+let settings: AppSettings = {
+  autoStart: false,
+  scale: 2,
+  activity: 'normal',
+  displayId: null,
+  sofa: { enabled: false, x: 0.72, y: 0.78 },
+  look: { skin: 0, hair: 0, top: 0, bottom: 0 },
+}
 
 function pushSettings() {
   if (!win || win.isDestroyed()) return
-  win.webContents.send('settings', { scale: settings.scale, activity: settings.activity })
+  win.webContents.send('settings', {
+    scale: settings.scale,
+    activity: settings.activity,
+    sofa: settings.sofa,
+    look: settings.look,
+  })
+}
+
+function currentDisplay() {
+  const displays = screen.getAllDisplays()
+  return displays.find((d) => d.id === settings.displayId) ?? screen.getPrimaryDisplay()
+}
+
+function moveToDisplay(id: number) {
+  const display = screen.getAllDisplays().find((d) => d.id === id)
+  if (!display || !win || win.isDestroyed()) return
+  const wa = display.workArea
+  win.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height })
+  updateSettings({ displayId: id })
 }
 
 function applyAutoStart() {
@@ -47,7 +72,7 @@ const POLL_IDLE_MS = 100 // 10Hz
 let pollMs = POLL_IDLE_MS
 
 function createWindow() {
-  const workArea = screen.getPrimaryDisplay().workArea
+  const workArea = currentDisplay().workArea
 
   win = new BrowserWindow({
     x: workArea.x,
@@ -130,7 +155,7 @@ function createTray() {
 
 function rebuildTrayMenu() {
   if (!tray) return
-  const scaleItem = (label: string, value: 2 | 3 | 4) => ({
+  const scaleItem = (label: string, value: 2 | 3) => ({
     label,
     type: 'radio' as const,
     checked: settings.scale === value,
@@ -154,15 +179,23 @@ function rebuildTrayMenu() {
       { type: 'separator' },
       {
         label: '캐릭터 크기',
-        submenu: [scaleItem('작게', 2), scaleItem('보통', 3), scaleItem('크게', 4)],
+        submenu: [scaleItem('작게', 2), scaleItem('보통', 3)],
       },
       {
         label: '활동성',
         submenu: [
-          activityItem('차분함', 'calm'),
+          activityItem('아주 차분함', 'calm'),
           activityItem('보통', 'normal'),
           activityItem('활발함', 'active'),
         ],
+      },
+      {
+        label: '모니터 이동',
+        visible: screen.getAllDisplays().length > 1,
+        submenu: screen.getAllDisplays().map((d, i) => ({
+          label: `모니터 ${i + 1} (${d.size.width}x${d.size.height})${d.id === currentDisplay().id ? ' ✓' : ''}`,
+          click: () => moveToDisplay(d.id),
+        })),
       },
       {
         label: '부팅 시 자동 시작',
@@ -185,19 +218,39 @@ app.whenReady().then(() => {
   createTray()
   // 전체화면 앱(유튜브 전체화면, 게임 등) 감지 시 캐릭터 자동 숨김 — 방해하지 않음 원칙
   // + 활성 창 rect를 렌더러에 전달해 "창 쳐다보기" 행동 발동
+  let lastRectKey = ''
   startFullscreenWatcher((info) => {
     fullscreenHidden = info.fullscreen
     applyVisibility()
-    if (!info.fullscreen && info.rect && win && !win.isDestroyed()) {
-      const b = win.getBounds()
-      win.webContents.send('active-window', {
-        x: info.rect.left - b.x,
-        y: info.rect.top - b.y,
-        w: info.rect.right - info.rect.left,
-        h: info.rect.bottom - info.rect.top,
-      })
+    if (!win || win.isDestroyed()) return
+    // 키보드/방치 정보는 매 폴 전달 (렌더러가 리액션에 사용)
+    win.webContents.send('user-input', { typing: info.typing, idleSec: info.idleSec })
+    // 활성 창 rect는 바뀌었을 때만 전달 (watch 재발동 방지)
+    if (!info.fullscreen && info.rect) {
+      const key = `${info.rect.left},${info.rect.top},${info.rect.right},${info.rect.bottom}`
+      if (key !== lastRectKey) {
+        lastRectKey = key
+        const b = win.getBounds()
+        win.webContents.send('active-window', {
+          x: info.rect.left - b.x,
+          y: info.rect.top - b.y,
+          w: info.rect.right - info.rect.left,
+          h: info.rect.bottom - info.rect.top,
+        })
+      }
     }
   })
+
+  // 모니터 구성이 바뀌면 메뉴 갱신 + 사라진 모니터에 있었다면 주 모니터로 복귀
+  const onDisplayChange = () => {
+    if (win && !win.isDestroyed()) {
+      const wa = currentDisplay().workArea
+      win.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height })
+    }
+    rebuildTrayMenu()
+  }
+  screen.on('display-added', onDisplayChange)
+  screen.on('display-removed', onDisplayChange)
 })
 
 app.on('window-all-closed', () => app.quit())
@@ -217,5 +270,13 @@ ipcMain.on('set-poll-rate', (_e, active: boolean) => {
 ipcMain.on('hide-window', () => {
   manualHidden = true
   applyVisibility()
+})
+
+ipcMain.on('save-sofa', (_e, sofa: AppSettings['sofa']) => {
+  updateSettings({ sofa })
+})
+
+ipcMain.on('save-look', (_e, look: AppSettings['look']) => {
+  updateSettings({ look })
 })
 ipcMain.on('quit-app', () => app.quit())

@@ -1,24 +1,55 @@
-// Phase 0 플레이스홀더 스프라이트 — ASCII 픽셀 맵을 런타임에 캔버스로 굽는다.
-// Phase 2에서 파츠 매니페스트 기반 스프라이트 시트로 교체 예정.
+// 픽셀 스프라이트 — ASCII 픽셀 맵을 런타임에 캔버스로 굽는다.
+// Phase 2: 팔레트 스왑 커스터마이징 (피부/머리/상의/하의 색) 지원.
 // 문자 = 팔레트 키. '.' 및 규격 밖은 투명. 파서는 행 길이에 관대하다.
 
 export const SPRITE_W = 16
 export const SPRITE_H = 24
-/** 기본 표시 배율 — 설정(트레이 메뉴)에서 2/3/4x 변경 가능 */
+/** 기본 표시 배율 — 설정(트레이 메뉴)에서 2/3x 변경 가능 */
 export const DEFAULT_SCALE = 2
 
-const PALETTE: Record<string, string> = {
-  K: '#4a3728', // hair
-  S: '#f2c9a0', // skin
+/** 커스터마이징 가능한 색상 견본 (옷장 UI) — 인덱스로 저장 */
+export const SWATCHES = {
+  skin: ['#f2c9a0', '#e8b48a', '#c68d5f', '#8d5b3b'],
+  hair: ['#4a3728', '#2d2d3a', '#7a4a2f', '#c9a04e', '#b55a6e', '#5b7a9e'],
+  top: ['#5b8bd9', '#c96a5b', '#6aa06a', '#8f7fd4', '#d9a45b', '#4a4f66'],
+  bottom: ['#3d4a63', '#6e4a3d', '#4a664f', '#2d2d3a'],
+} as const
+
+export interface Look {
+  skin: number
+  hair: number
+  top: number
+  bottom: number
+}
+
+export const DEFAULT_LOOK: Look = { skin: 0, hair: 0, top: 0, bottom: 0 }
+
+const BASE_PALETTE: Record<string, string> = {
+  K: SWATCHES.hair[0], // hair
+  S: SWATCHES.skin[0], // skin
   E: '#2d2d3a', // eye
   L: '#a8794f', // closed eye / lash
   M: '#c96a5b', // mouth
-  T: '#5b8bd9', // shirt
-  P: '#3d4a63', // pants
+  T: SWATCHES.top[0], // shirt
+  P: SWATCHES.bottom[0], // pants
   B: '#8a5a3b', // shoes
   H: '#e85d75', // heart
   D: '#3a3f52', // laptop body
   W: '#cfe6ff', // laptop screen glow
+  F: '#8a4f3d', // sofa frame
+  C: '#d98c7a', // sofa cushion
+  N: '#b9695a', // sofa cushion shade
+}
+
+function paletteWithLook(look: Look): Record<string, string> {
+  const clamp = (arr: readonly string[], i: number) => arr[Math.max(0, Math.min(arr.length - 1, i))]
+  return {
+    ...BASE_PALETTE,
+    S: clamp(SWATCHES.skin, look.skin),
+    K: clamp(SWATCHES.hair, look.hair),
+    T: clamp(SWATCHES.top, look.top),
+    P: clamp(SWATCHES.bottom, look.bottom),
+  }
 }
 
 // 몸통(머리~허리, 17행) — 다리 변형과 조합해 24행 프레임을 만든다
@@ -33,6 +64,27 @@ const BODY = [
   '...KSSSSSSSSK...',
   '...KSSSMMSSSK...',
   '....SSSSSSSS....',
+  '.....SSSSSS.....',
+  '....TTTTTTTT....',
+  '...TTTTTTTTTT...',
+  '..STTTTTTTTTTS..',
+  '..STTTTTTTTTTS..',
+  '...TTTTTTTTTT...',
+  '....TTTTTTTT....',
+]
+
+// 뒷모습 (사용자 화면/창을 쳐다볼 때) — 얼굴 없이 뒷머리
+const BODY_BACK = [
+  '................',
+  '.....KKKKKK.....',
+  '....KKKKKKKK....',
+  '...KKKKKKKKKK...',
+  '...KKKKKKKKKK...',
+  '...KKKKKKKKKK...',
+  '...KKKKKKKKKK...',
+  '...KKKKKKKKKK...',
+  '...KKKKKKKKKK...',
+  '....KKKKKKKK....',
   '.....SSSSSS.....',
   '....TTTTTTTT....',
   '...TTTTTTTTTT...',
@@ -106,7 +158,40 @@ const LEGS_WORK_B = [
   '................',
 ]
 
+// 그냥 앉기 (소파 등)
+const LEGS_SIT = [
+  '....PPPPPPPP....',
+  '...PPPPPPPPPP...',
+  '...PPP....PPP...',
+  '...PPP....PPP...',
+  '...BBB....BBB...',
+  '................',
+  '................',
+]
+
 export const HEART = ['.HH.HH.', 'HHHHHHH', 'HHHHHHH', '.HHHHH.', '..HHH..', '...H...']
+
+// 1인용 소파 (가구) — 24x16
+export const SOFA_W = 24
+export const SOFA_H = 16
+export const SOFA = [
+  '..FFFFFFFFFFFFFFFFFF...',
+  '.FCCCCCCCCCCCCCCCCCCF..',
+  '.FCCCCCCCCCCCCCCCCCCF..',
+  '.FCCCCCCCCCCCCCCCCCCF..',
+  '.FCCCCCCCCCCCCCCCCCCF..',
+  '.FCCCCCCCCCCCCCCCCCCF..',
+  'FFNNNNNNNNNNNNNNNNNNFF.',
+  'FCCNNNNNNNNNNNNNNNNCCF.',
+  'FCCCCCCCCCCCCCCCCCCCCF.',
+  'FCCCCCCCCCCCCCCCCCCCCF.',
+  'FFFFFFFFFFFFFFFFFFFFFF.',
+  'FFFFFFFFFFFFFFFFFFFFFF.',
+  '.FF................FF..',
+  '.FF................FF..',
+  '.FF................FF..',
+  '........................',
+]
 
 export type FrameName =
   | 'idle'
@@ -119,6 +204,8 @@ export type FrameName =
   | 'heldB'
   | 'workA'
   | 'workB'
+  | 'back'
+  | 'sit'
 
 function closeEyes(rows: string[]): string[] {
   return rows.map((r) => r.replace(/E/g, 'L'))
@@ -135,6 +222,8 @@ const FRAME_MAPS: Record<FrameName, string[]> = {
   heldB: [...BODY, ...LEGS_FLAIL_B],
   workA: [...BODY, ...LEGS_WORK_A],
   workB: [...BODY, ...LEGS_WORK_B],
+  back: [...BODY_BACK, ...LEGS_IDLE], // 뒤돌아보기 (창/작업 구경)
+  sit: [...BODY, ...LEGS_SIT],
 }
 
 export interface BakedFrame {
@@ -143,11 +232,22 @@ export interface BakedFrame {
   mask: boolean[][]
 }
 
-export function bakeFrame(name: FrameName): BakedFrame {
-  return bakeMap(FRAME_MAPS[name], SPRITE_W, SPRITE_H)
+export function bakeFrame(name: FrameName, look: Look = DEFAULT_LOOK): BakedFrame {
+  return bakeMap(FRAME_MAPS[name], SPRITE_W, SPRITE_H, paletteWithLook(look))
 }
 
-export function bakeMap(rows: string[], w: number, h: number): BakedFrame {
+export function bakeAllFrames(look: Look): Record<FrameName, BakedFrame> {
+  const out = {} as Record<FrameName, BakedFrame>
+  for (const name of Object.keys(FRAME_MAPS) as FrameName[]) out[name] = bakeFrame(name, look)
+  return out
+}
+
+export function bakeMap(
+  rows: string[],
+  w: number,
+  h: number,
+  palette: Record<string, string> = BASE_PALETTE,
+): BakedFrame {
   const canvas = document.createElement('canvas')
   canvas.width = w
   canvas.height = h
@@ -156,7 +256,7 @@ export function bakeMap(rows: string[], w: number, h: number): BakedFrame {
   for (let y = 0; y < Math.min(h, rows.length); y++) {
     const row = rows[y]
     for (let x = 0; x < Math.min(w, row.length); x++) {
-      const color = PALETTE[row[x]]
+      const color = palette[row[x]]
       if (!color) continue
       ctx.fillStyle = color
       ctx.fillRect(x, y, 1, 1)

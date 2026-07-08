@@ -1,15 +1,21 @@
-import { Character } from './engine/character'
+import { Character, type Home } from './engine/character'
 import {
-  bakeFrame,
+  bakeAllFrames,
   bakeMap,
   HEART,
+  SOFA,
+  SOFA_W,
+  SOFA_H,
   SPRITE_W,
   SPRITE_H,
   DEFAULT_SCALE,
+  DEFAULT_LOOK,
+  SWATCHES,
+  type Look,
   type FrameName,
   type BakedFrame,
 } from './engine/sprite'
-import type { CompanionBridge } from '../electron/preload'
+import type { CompanionBridge, SofaState } from '../electron/preload'
 
 declare global {
   interface Window {
@@ -30,19 +36,19 @@ window.addEventListener('resize', () => {
   ctx.imageSmoothingEnabled = false
 })
 
-const frames: Record<FrameName, BakedFrame> = {
-  idle: bakeFrame('idle'),
-  blink: bakeFrame('blink'),
-  walkA: bakeFrame('walkA'),
-  walkB: bakeFrame('walkB'),
-  sleep: bakeFrame('sleep'),
-  pant: bakeFrame('pant'),
-  heldA: bakeFrame('heldA'),
-  heldB: bakeFrame('heldB'),
-  workA: bakeFrame('workA'),
-  workB: bakeFrame('workB'),
-}
+// ---------- 프레임 (Phase 2: 팔레트 스왑 커스터마이징) ----------
+
+let look: Look = { ...DEFAULT_LOOK }
+let frames: Record<FrameName, BakedFrame> = bakeAllFrames(look)
 const heart = bakeMap(HEART, 7, 6)
+const sofaSprite = bakeMap(SOFA, SOFA_W, SOFA_H)
+
+function applyLook(next: Look) {
+  look = { ...next }
+  frames = bakeAllFrames(look)
+}
+
+// ---------- 크기/경계 ----------
 
 // 표시 배율 — 트레이 설정으로 런타임 변경 가능
 let SCALE = DEFAULT_SCALE
@@ -67,30 +73,93 @@ function computeBounds() {
     maxY: canvas.height - EDGE,
   }
 }
+
+// ---------- 소파 (가구 / 홈 모드) ----------
+
+const sofa = {
+  enabled: false,
+  x: 0.72, // 정규화 좌표 (좌상단 기준)
+  y: 0.78,
+}
+
+function sofaRect() {
+  const w = SOFA_W * SCALE
+  const h = SOFA_H * SCALE
+  return {
+    x: Math.max(0, Math.min(canvas.width - w, sofa.x * canvas.width)),
+    y: Math.max(0, Math.min(canvas.height - h, sofa.y * canvas.height)),
+    w,
+    h,
+  }
+}
+
+function homeState(): Home | null {
+  if (!sofa.enabled) return null
+  const r = sofaRect()
+  return {
+    x: r.x + r.w / 2,
+    y: r.y + r.h,
+    // 앉는 자리: 방석 중앙, 발이 소파 아래쪽에 오도록
+    seatX: r.x + r.w / 2,
+    seatY: r.y + r.h - 2 * SCALE,
+    radius: 240,
+  }
+}
+
+function overSofa(px: number, py: number): boolean {
+  if (!sofa.enabled) return false
+  const r = sofaRect()
+  return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h
+}
+
+function saveSofa() {
+  bridge.saveSofa({ enabled: sofa.enabled, x: sofa.x, y: sofa.y } as SofaState)
+}
+
+// ---------- 월드/캐릭터 ----------
+
 const world = {
   cursor: null as { x: number; y: number } | null,
   bounds: computeBounds(),
   userActive: false,
+  userIdleSec: 0,
+  home: null as Home | null,
 }
 const char = new Character(canvas.width / 2, canvas.height * 0.7)
 
-// 트레이 설정 반영 (시작 시 + 변경 시)
+// 트레이/설정 반영 (시작 시 + 변경 시)
 bridge.onSettings((s) => {
   applyScale(s.scale)
   char.applyActivity(s.activity)
+  sofa.enabled = s.sofa.enabled
+  sofa.x = s.sofa.x
+  sofa.y = s.sofa.y
+  applyLook(s.look)
 })
 
-// 사용자 활동 감지: 커서가 최근에 움직였는가 (Co-work 트리거)
+// 사용자 활동 감지 (Co-work/방치 리액션)
 let lastCursorMoveAt = 0
 let prevCursor: { x: number; y: number } | null = null
+let lastTypingAt = 0
+let watcherIdleSec = 0
+
+bridge.onUserInput((input) => {
+  if (input.typing) lastTypingAt = performance.now()
+  watcherIdleSec = input.idleSec
+})
 
 // ---------- 클릭통과 <-> 상호작용 전환 ----------
 
 let interactive = false
 let menuOpen = false
+let wardrobeOpen = false
+/** 캐릭터 드래그: mousedown만으로는 잡지 않고, 실제로 끌기 시작해야 집는다 */
+let pendingGrab: { x: number; y: number } | null = null
 let dragging = false
-let dragMoved = 0
+let sofaDragging = false
+let sofaDragOffset = { dx: 0, dy: 0 }
 let suppressClick = false
+const DRAG_THRESHOLD = 8 // px — 이만큼 끌어야 '집기'로 인정
 
 /** 현재 프레임의 불투명 픽셀 위인지 per-pixel 검사 */
 function overCharacter(px: number, py: number): boolean {
@@ -106,7 +175,14 @@ function overCharacter(px: number, py: number): boolean {
 }
 
 function syncInteractive(cursor: { x: number; y: number }) {
-  const want = menuOpen || dragging || overCharacter(cursor.x, cursor.y)
+  const want =
+    menuOpen ||
+    wardrobeOpen ||
+    dragging ||
+    sofaDragging ||
+    pendingGrab !== null ||
+    overCharacter(cursor.x, cursor.y) ||
+    overSofa(cursor.x, cursor.y)
   if (want !== interactive) {
     interactive = want
     bridge.setInteractive(want)
@@ -120,45 +196,65 @@ bridge.onCursor((pos) => {
   }
   prevCursor = pos
   world.cursor = pos
+
+  // 클릭 상태에서 임계값 이상 끌면 그때 집는다 (클릭만으로는 안 잡음)
+  if (pendingGrab && !dragging) {
+    if (Math.hypot(pos.x - pendingGrab.x, pos.y - pendingGrab.y) > DRAG_THRESHOLD) {
+      dragging = true
+      char.grab()
+      bridge.setPollRate(true)
+    }
+  }
   if (dragging) {
     // 머리를 잡고 있으므로 발 위치 = 커서 아래쪽
     char.heldMoveTo(pos.x, pos.y + H - GRIP, world.bounds)
   }
+  if (sofaDragging) {
+    const r = sofaRect()
+    sofa.x = (pos.x - sofaDragOffset.dx) / canvas.width
+    sofa.y = (pos.y - sofaDragOffset.dy) / canvas.height
+    sofa.x = Math.max(0, Math.min(1 - r.w / canvas.width, sofa.x))
+    sofa.y = Math.max(0, Math.min(1 - r.h / canvas.height, sofa.y))
+  }
   syncInteractive(pos)
 })
 
-// ---------- 활성 창 쳐다보기 ----------
+// ---------- 활성 창 쳐다보기 (홈 모드에서는 외출 안 함) ----------
 
 bridge.onActiveWindow((rect) => {
   if (rect.w < 120 || rect.h < 80) return // 툴팁/팝업류 무시
   // 창 상단 중앙, 발이 창 위 모서리에 살짝 걸치는 위치
-  char.notifyActiveWindow({ x: rect.x + rect.w / 2, y: rect.y - 2 })
+  char.notifyActiveWindow({ x: rect.x + rect.w / 2, y: rect.y - 2 }, sofa.enabled)
 })
 
-// ---------- 집어 옮기기 (드래그) ----------
+// ---------- 마우스 입력 (집기 / 소파 옮기기) ----------
 
 window.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return
-  if (menuOpen && menu.contains(e.target as Node)) return
+  if ((menuOpen && menu.contains(e.target as Node)) || wardrobe.contains(e.target as Node)) return
   if (overCharacter(e.clientX, e.clientY)) {
     closeMenu()
-    dragging = true
-    dragMoved = 0
-    char.grab()
-    char.heldMoveTo(e.clientX, e.clientY + H - GRIP, world.bounds)
-    bridge.setPollRate(true)
+    pendingGrab = { x: e.clientX, y: e.clientY }
+  } else if (overSofa(e.clientX, e.clientY)) {
+    closeMenu()
+    const r = sofaRect()
+    sofaDragging = true
+    sofaDragOffset = { dx: e.clientX - r.x, dy: e.clientY - r.y }
   }
 })
 
-window.addEventListener('mousemove', (e) => {
-  if (dragging) dragMoved += Math.abs(e.movementX) + Math.abs(e.movementY)
-})
-
 window.addEventListener('mouseup', () => {
-  if (!dragging) return
-  dragging = false
-  char.release()
-  suppressClick = dragMoved > 6 // 실제로 끌었다면 이어지는 click을 쓰다듬기로 치지 않음
+  if (dragging) {
+    dragging = false
+    char.release()
+    suppressClick = true // 끌었다면 이어지는 click을 쓰다듬기로 치지 않음
+  }
+  pendingGrab = null
+  if (sofaDragging) {
+    sofaDragging = false
+    suppressClick = true
+    saveSofa()
+  }
   if (world.cursor) syncInteractive(world.cursor)
 })
 
@@ -209,6 +305,26 @@ function buildMenu() {
     'sep',
     { label: '간식 주기', action: () => char.feed() },
     { label: '쓰다듬기', action: () => char.poke() },
+    'sep',
+    { label: '옷장 열기…', action: () => openWardrobe() },
+    sofa.enabled
+      ? {
+          label: '소파 치우기',
+          action: () => {
+            sofa.enabled = false
+            saveSofa()
+          },
+        }
+      : {
+          label: '소파 꺼내기',
+          action: () => {
+            sofa.enabled = true
+            // 캐릭터 근처에 놓아준다
+            sofa.x = Math.max(0, Math.min(0.9, (char.x + 40) / canvas.width))
+            sofa.y = Math.max(0, Math.min(0.9, (char.y - SOFA_H * SCALE) / canvas.height))
+            saveSofa()
+          },
+        },
     'sep',
     { label: '숨기기 (트레이)', action: () => bridge.hideWindow() },
     { label: '종료', action: () => bridge.quitApp() },
@@ -263,26 +379,112 @@ window.addEventListener('click', (e) => {
     if (!menu.contains(e.target as Node)) closeMenu()
     return
   }
+  if (wardrobeOpen && !wardrobe.contains(e.target as Node)) {
+    closeWardrobe()
+    return
+  }
   if (overCharacter(e.clientX, e.clientY)) char.poke()
 })
 
-// ---------- 말풍선 ----------
+// ---------- 옷장 (Phase 2: 색 커스터마이징) ----------
 
-const bubble = document.getElementById('bubble') as HTMLDivElement
-let bubbleTimer = 0
+const wardrobe = document.getElementById('wardrobe') as HTMLDivElement
 
-function updateBubble(dt: number) {
-  if (bubbleTimer <= 0 && char.messages.length > 0) {
-    bubble.textContent = char.messages.shift()!
-    bubbleTimer = 2.8
-    bubble.style.display = 'block'
+const LOOK_SLOTS: Array<{ key: keyof Look; label: string; colors: readonly string[] }> = [
+  { key: 'skin', label: '피부', colors: SWATCHES.skin },
+  { key: 'hair', label: '머리', colors: SWATCHES.hair },
+  { key: 'top', label: '상의', colors: SWATCHES.top },
+  { key: 'bottom', label: '하의', colors: SWATCHES.bottom },
+]
+
+function buildWardrobe() {
+  wardrobe.innerHTML = ''
+  const title = document.createElement('div')
+  title.className = 'w-title'
+  title.textContent = '옷장'
+  wardrobe.appendChild(title)
+
+  for (const slot of LOOK_SLOTS) {
+    const row = document.createElement('div')
+    row.className = 'w-row'
+    const name = document.createElement('span')
+    name.textContent = slot.label
+    row.appendChild(name)
+    slot.colors.forEach((color, idx) => {
+      const sw = document.createElement('button')
+      sw.className = 'swatch' + (look[slot.key] === idx ? ' active' : '')
+      sw.style.background = color
+      sw.addEventListener('click', () => {
+        applyLook({ ...look, [slot.key]: idx })
+        bridge.saveLook(look)
+        buildWardrobe() // active 표시 갱신
+      })
+      row.appendChild(sw)
+    })
+    wardrobe.appendChild(row)
   }
-  if (bubbleTimer > 0) {
-    bubbleTimer -= dt
-    bubble.style.left = `${char.x}px`
-    bubble.style.top = `${char.y - H - 12}px`
-    if (bubbleTimer <= 0) bubble.style.display = 'none'
+
+  const close = document.createElement('div')
+  close.className = 'item w-close'
+  close.textContent = '닫기'
+  close.addEventListener('click', closeWardrobe)
+  wardrobe.appendChild(close)
+}
+
+function openWardrobe() {
+  buildWardrobe()
+  wardrobeOpen = true
+  wardrobe.style.display = 'block'
+  const x = Math.min(char.x + W, canvas.width - 220)
+  const y = Math.min(Math.max(8, char.y - H), canvas.height - 220)
+  wardrobe.style.left = `${x}px`
+  wardrobe.style.top = `${y}px`
+  bridge.setInteractive(true)
+  interactive = true
+}
+
+function closeWardrobe() {
+  if (!wardrobeOpen) return
+  wardrobeOpen = false
+  wardrobe.style.display = 'none'
+  if (world.cursor) syncInteractive(world.cursor)
+}
+
+// ---------- 이모트 (텍스트 박스 없이 심볼만) ----------
+
+let emoteText: string | null = null
+let emoteTimer = 0
+const EMOTE_TIME = 1.8
+
+function updateEmote(dt: number) {
+  if (emoteTimer <= 0 && char.messages.length > 0) {
+    emoteText = char.messages.shift()!
+    emoteTimer = EMOTE_TIME
   }
+  if (emoteTimer > 0) {
+    emoteTimer -= dt
+    if (emoteTimer <= 0) emoteText = null
+  }
+}
+
+function drawEmote() {
+  if (!emoteText) return
+  const t = 1 - emoteTimer / EMOTE_TIME // 0→1
+  const rise = t * 10 * (SCALE / 2)
+  const alpha = t > 0.7 ? 1 - (t - 0.7) / 0.3 : 1
+  const pop = t < 0.15 ? 0.7 + (t / 0.15) * 0.3 : 1
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.font = `bold ${Math.round(9 * SCALE * pop)}px 'Courier New', monospace`
+  ctx.textAlign = 'center'
+  ctx.lineWidth = 3
+  ctx.strokeStyle = '#22242f'
+  ctx.fillStyle = '#ffffff'
+  const ex = char.x
+  const ey = char.y - H - 8 - rise
+  ctx.strokeText(emoteText, ex, ey)
+  ctx.fillText(emoteText, ex, ey)
+  ctx.restore()
 }
 
 // ---------- 애니메이션 & 메인 루프 ----------
@@ -296,6 +498,10 @@ function currentFrame(): BakedFrame {
       return Math.floor(animTime * 8) % 2 === 0 ? frames.heldA : frames.heldB
     case 'work':
       return Math.floor(animTime * 4) % 2 === 0 ? frames.workA : frames.workB
+    case 'back':
+      return frames.back
+    case 'sit':
+      return frames.sit
     case 'sleep':
       return frames.sleep
     case 'pant':
@@ -311,6 +517,13 @@ function currentFrame(): BakedFrame {
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+  // 소파 (캐릭터보다 뒤에)
+  if (sofa.enabled) {
+    const r = sofaRect()
+    ctx.drawImage(sofaSprite.canvas, r.x, r.y, r.w, r.h)
+  }
+
   const frame = currentFrame()
   const top = char.y - H
 
@@ -353,6 +566,8 @@ function draw() {
     const drop = Math.floor(animTime * 4) % 2 === 0 ? 0 : SCALE
     ctx.fillRect(char.x + W / 2 - SCALE, top + 6 * SCALE + drop, SCALE, SCALE * 2)
   }
+
+  drawEmote()
 }
 
 let last = performance.now()
@@ -366,12 +581,18 @@ function loop(now: number) {
   if (blinkTimer < 0) blinkTimer = 2 + Math.random() * 3
 
   world.bounds = computeBounds()
-  world.userActive = performance.now() - lastCursorMoveAt < 5000
+  world.home = homeState()
+  // 활동 판정: 커서 이동 or 최근 타이핑. 방치 시간은 워처(키+마우스 통합) 기준
+  const cursorActive = now - lastCursorMoveAt < 5000
+  const typingActive = now - lastTypingAt < 4000
+  world.userActive = cursorActive || typingActive
+  world.userIdleSec = watcherIdleSec
   char.update(dt, world)
-  updateBubble(dt)
+  updateEmote(dt)
 
   // 따라다니거나 집혀 있는 동안만 커서 폴링을 고빈도로 (CPU 예산)
-  const wantActive = char.state === 'follow' || char.state === 'exhausted' || dragging
+  const wantActive =
+    char.state === 'follow' || char.state === 'exhausted' || dragging || sofaDragging
   if (wantActive !== lastPollActive) {
     lastPollActive = wantActive
     bridge.setPollRate(wantActive)

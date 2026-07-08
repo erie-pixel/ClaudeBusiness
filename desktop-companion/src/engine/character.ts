@@ -10,8 +10,9 @@ export type StateName =
   | 'nap'
   | 'stay'
   | 'held' // 마우스로 집어든 상태 — 위치는 렌더러가 커서로 직접 제어
-  | 'watch' // 활성 창 쳐다보기
+  | 'watch' // 활성 창 쳐다보기 (뒤돌아서 구경)
   | 'cowork' // 사용자가 일하는 동안 옆에서 같이 일하기
+  | 'sit' // 소파에 앉아 쉬기 (홈 모드)
 
 export interface Bounds {
   minX: number
@@ -20,13 +21,28 @@ export interface Bounds {
   maxY: number
 }
 
+export interface Home {
+  /** 활동 반경의 중심 (소파 위치) */
+  x: number
+  y: number
+  /** 앉는 자리 (발 기준) */
+  seatX: number
+  seatY: number
+  /** 이 반경 안에서만 배회 */
+  radius: number
+}
+
 export interface World {
   /** 커서 위치 (창 좌표). 아직 커서 정보를 못 받았으면 null */
   cursor: { x: number; y: number } | null
   /** 캐릭터 발 위치가 다닐 수 있는 영역 */
   bounds: Bounds
-  /** 사용자가 지금 활동 중인가 (최근 커서 움직임 기준, 렌더러가 계산) */
+  /** 사용자가 지금 활동 중인가 (커서/키보드 입력 기준, 렌더러가 계산) */
   userActive: boolean
+  /** 사용자가 마지막 입력 후 몇 초 지났나 */
+  userIdleSec: number
+  /** 소파(가구) 홈 모드 — 설정 시 이 주변에서만 활동 */
+  home: Home | null
 }
 
 export interface CharacterConfig {
@@ -66,9 +82,9 @@ export interface CharacterConfig {
   coworkIdleGrace: number // 사용자가 이 시간(s) 이상 손을 놓으면 일 그만둠
 }
 
-// 기본값은 '차분함' — 상주 앱이므로 존재감은 있되 부산스럽지 않게
+// 기본값은 '보통' — 상주 앱이므로 존재감은 있되 부산스럽지 않게
 export const DEFAULT_CONFIG: CharacterConfig = {
-  walkSpeed: 36,
+  walkSpeed: 30,
   runSpeed: 150,
   runDistance: 420,
   arriveDistance: 36,
@@ -77,8 +93,8 @@ export const DEFAULT_CONFIG: CharacterConfig = {
   staminaRegen: 6,
   staminaNapRegen: 16,
   exhaustedRecoverAt: 35,
-  wanderPauseMin: 8,
-  wanderPauseMax: 25,
+  wanderPauseMin: 18,
+  wanderPauseMax: 45,
   hungerRate: 100 / (3.5 * 3600), // ~3.5시간에 만배고픔
   hungerFeedRelief: 70,
   hungryAt: 80,
@@ -87,10 +103,10 @@ export const DEFAULT_CONFIG: CharacterConfig = {
   sleepinessNapRelief: 0.9,
   autoNapAt: 85,
   napWakeAt: 10,
-  watchChance: 0.3,
+  watchChance: 0.18,
   watchTimeMin: 6,
   watchTimeMax: 14,
-  coworkThreshold: 150,
+  coworkThreshold: 260,
   coworkChance: 0.6,
   coworkTimeMin: 60,
   coworkTimeMax: 180,
@@ -101,31 +117,42 @@ export const DEFAULT_CONFIG: CharacterConfig = {
 export type ActivityLevel = 'calm' | 'normal' | 'active'
 
 export const ACTIVITY_PRESETS: Record<ActivityLevel, Partial<CharacterConfig>> = {
+  // 가장 차분함 — 거의 가만히 있고 가끔만 움직임
   calm: {
+    walkSpeed: 26,
+    wanderPauseMin: 40,
+    wanderPauseMax: 100,
+    watchChance: 0.08,
+    coworkThreshold: 480,
+  },
+  normal: {
+    walkSpeed: 30,
+    wanderPauseMin: 18,
+    wanderPauseMax: 45,
+    watchChance: 0.18,
+    coworkThreshold: 260,
+  },
+  // 예전 '차분함' 수준이 이제 가장 활발한 단계
+  active: {
     walkSpeed: 36,
     wanderPauseMin: 8,
     wanderPauseMax: 25,
     watchChance: 0.3,
     coworkThreshold: 150,
   },
-  normal: {
-    walkSpeed: 42,
-    wanderPauseMin: 4,
-    wanderPauseMax: 14,
-    watchChance: 0.5,
-    coworkThreshold: 100,
-  },
-  active: {
-    walkSpeed: 48,
-    wanderPauseMin: 2,
-    wanderPauseMax: 8,
-    watchChance: 0.65,
-    coworkThreshold: 60,
-  },
 }
 
 /** 렌더러가 애니메이션을 고르는 데 쓰는 표시용 상태 */
-export type Pose = 'idle' | 'walk' | 'run' | 'pant' | 'sleep' | 'held' | 'work'
+export type Pose =
+  | 'idle'
+  | 'walk'
+  | 'run'
+  | 'pant'
+  | 'sleep'
+  | 'held'
+  | 'work'
+  | 'back' // 뒤돌아서 구경
+  | 'sit'
 
 export class Character {
   x: number
@@ -136,7 +163,7 @@ export class Character {
   moving = false
   /** 하트 이모트 잔여 시간 (쓰다듬기/간식) */
   emoteTimer = 0
-  /** 말풍선 대사 큐 — 렌더러가 shift()로 꺼내 표시 */
+  /** 이모트 심볼 큐 (!, ?, ♪ 등) — 렌더러가 shift()로 꺼내 머리 위에 표시 */
   messages: string[] = []
 
   // 스탯 (0~100)
@@ -160,6 +187,11 @@ export class Character {
   private coworkIdleFor = 0
   /** 한 번 일하고 나면 잠시 쉬는 재발동 쿨다운 (s) */
   private coworkCooldown = 0
+  /** watch 목적지 도착 여부 (뒤돌아보기 포즈) */
+  private watchArrived = false
+  private sitTimer = 0
+  /** 사용자 장기 방치에 한 번만 반응 */
+  private idleReacted = false
 
   constructor(
     x: number,
@@ -204,7 +236,7 @@ export class Character {
     this.hunger = Math.max(0, this.hunger - this.cfg.hungerFeedRelief)
     this.mood = Math.min(100, this.mood + 10)
     this.emoteTimer = 1.6
-    this.say('냠냠!')
+    this.say('♪')
     if (this.state === 'nap') this.state = 'idle' // 간식 냄새에 깬다
   }
   /** 좌클릭: 자면 깨우고, 깨어 있으면 쓰다듬기 */
@@ -223,7 +255,7 @@ export class Character {
   grab() {
     if (this.state !== 'held') {
       this.state = 'held'
-      this.say('으앗?!')
+      this.say('!?')
     }
   }
   /** 내려놓기 */
@@ -231,7 +263,7 @@ export class Character {
     if (this.state === 'held') {
       this.state = 'idle'
       this.pauseTimer = 1.2 // 잠깐 어리둥절
-      this.say('휴…')
+      this.say('…')
     }
   }
   /** 집힌 동안 렌더러가 위치를 직접 지정 */
@@ -240,9 +272,10 @@ export class Character {
     this.y = Math.max(bounds.minY, Math.min(bounds.maxY, y))
   }
 
-  /** 활성 창이 바뀌었다는 알림 → 확률적으로 구경하러 감 */
-  notifyActiveWindow(point: { x: number; y: number }) {
+  /** 활성 창이 바뀌었다는 알림 → 확률적으로 구경하러 감 (홈 모드에서는 안 감) */
+  notifyActiveWindow(point: { x: number; y: number }, homeMode = false) {
     this.lastWindowPoint = point // Co-work 자리 선정에도 사용
+    if (homeMode) return
     if (this.state === 'watch') {
       this.watchTarget = point // 이미 구경 중이면 새 창으로 관심 이동
       return
@@ -250,10 +283,11 @@ export class Character {
     if (this.state !== 'wander' && this.state !== 'idle') return
     if (this.rng() < this.cfg.watchChance) {
       this.state = 'watch'
+      this.watchArrived = false
       this.watchTarget = point
       this.watchTimer =
         this.cfg.watchTimeMin + this.rng() * (this.cfg.watchTimeMax - this.cfg.watchTimeMin)
-      if (this.rng() < 0.3) this.say('오~ 뭐 해?')
+      if (this.rng() < 0.5) this.say('?')
     }
   }
 
@@ -269,8 +303,11 @@ export class Character {
         return this.moving ? (this.running ? 'run' : 'walk') : 'idle'
       case 'cowork':
         return this.moving ? 'walk' : 'work'
-      case 'wander':
       case 'watch':
+        return this.moving ? 'walk' : this.watchArrived ? 'back' : 'idle'
+      case 'sit':
+        return this.moving ? 'walk' : 'sit'
+      case 'wander':
         return this.moving ? 'walk' : 'idle'
       default:
         return 'idle'
@@ -310,6 +347,10 @@ export class Character {
         this.updateCowork(dt, world)
         this.regen(dt)
         break
+      case 'sit':
+        this.updateSit(dt, world)
+        this.regen(dt)
+        break
       case 'wander':
         this.updateWander(dt, world)
         this.regen(dt)
@@ -317,8 +358,14 @@ export class Character {
       case 'idle':
         this.pauseTimer -= dt
         if (this.pauseTimer <= 0) {
-          this.state = 'wander'
-          this.wanderTarget = null
+          // 홈(소파) 모드에서는 배회 대신 종종 소파에 앉는다
+          if (world.home && this.rng() < 0.45) {
+            this.state = 'sit'
+            this.sitTimer = 20 + this.rng() * 40
+          } else {
+            this.state = 'wander'
+            this.wanderTarget = null
+          }
         }
         this.regen(dt)
         break
@@ -333,10 +380,24 @@ export class Character {
       (this.state === 'wander' || this.state === 'idle')
     ) {
       this.state = 'nap'
-      this.say('졸려…')
+      this.say('Zz…')
     }
 
-    // 같이 일하기: 사용자 활동이 꾸준히 이어지면 옆에 와서 같이 일한다
+    // 사용자가 오래 자리를 비우면 두리번거리며 갸웃 (한 번만)
+    if (world.userIdleSec >= 90) {
+      if (
+        !this.idleReacted &&
+        (this.state === 'wander' || this.state === 'idle' || this.state === 'sit')
+      ) {
+        this.idleReacted = true
+        this.say('?')
+        this.facing = this.facing === 1 ? -1 : 1 // 두리번
+      }
+    } else if (world.userIdleSec < 5) {
+      this.idleReacted = false
+    }
+
+    // 같이 일하기: 사용자 활동이 꾸준히 이어지면 옆에 와서 같이 일한다 (홈 모드에서는 안 함)
     if (this.coworkCooldown > 0) this.coworkCooldown -= dt
     if (this.state !== 'cowork') {
       if (world.userActive) this.workDesire += dt
@@ -345,6 +406,7 @@ export class Character {
     if (
       this.workDesire >= this.cfg.coworkThreshold &&
       this.coworkCooldown <= 0 &&
+      !world.home &&
       (this.state === 'wander' || this.state === 'idle')
     ) {
       this.workDesire = 0
@@ -354,7 +416,7 @@ export class Character {
         this.coworkTimer =
           this.cfg.coworkTimeMin + this.rng() * (this.cfg.coworkTimeMax - this.cfg.coworkTimeMin)
         this.coworkIdleFor = 0
-        this.say('나도 일할래!')
+        this.say('!')
       }
     }
 
@@ -380,7 +442,7 @@ export class Character {
       this.mood = Math.max(0, this.mood - 0.02 * dt * 60)
       this.hungrySayCooldown -= dt
       if (this.hungrySayCooldown <= 0 && this.state !== 'nap' && this.state !== 'held') {
-        this.say('배고파…')
+        this.say('~?')
         this.hungrySayCooldown = 45
       }
     }
@@ -419,7 +481,7 @@ export class Character {
       if (this.stamina <= 0) {
         this.stamina = 0
         this.state = 'exhausted'
-        this.say('헥헥…')
+        this.say(';;')
       }
     }
   }
@@ -427,10 +489,20 @@ export class Character {
   private updateWander(dt: number, world: World) {
     const b = world.bounds
     if (this.wanderTarget === null) {
-      // 화면 어디든 자유롭게 — x, y 각각 랜덤 지점
-      this.wanderTarget = {
-        x: b.minX + this.rng() * (b.maxX - b.minX),
-        y: b.minY + this.rng() * (b.maxY - b.minY),
+      if (world.home) {
+        // 홈 모드 — 소파 반경 안의 랜덤 지점만
+        const angle = this.rng() * Math.PI * 2
+        const r = this.rng() * world.home.radius
+        this.wanderTarget = {
+          x: Math.max(b.minX, Math.min(b.maxX, world.home.x + Math.cos(angle) * r)),
+          y: Math.max(b.minY, Math.min(b.maxY, world.home.y + Math.sin(angle) * r)),
+        }
+      } else {
+        // 화면 어디든 자유롭게 — x, y 각각 랜덤 지점
+        this.wanderTarget = {
+          x: b.minX + this.rng() * (b.maxX - b.minX),
+          y: b.minY + this.rng() * (b.maxY - b.minY),
+        }
       }
     }
     const t = this.wanderTarget
@@ -473,13 +545,13 @@ export class Character {
       this.coworkIdleFor += dt
       if (this.coworkIdleFor >= this.cfg.coworkIdleGrace) {
         this.endCowork(2)
-        this.say('쉬는 거야?')
+        this.say('?')
         return
       }
     }
     if (this.coworkTimer <= 0) {
       this.endCowork(2 + this.rng() * 4)
-      this.say('오늘도 열일!')
+      this.say('♪')
     }
   }
 
@@ -489,6 +561,27 @@ export class Character {
     this.pauseTimer = pause
     this.workDesire = 0
     this.coworkCooldown = 60 // 방금 일했으니 당분간은 다시 안 옴
+  }
+
+  private updateSit(dt: number, world: World) {
+    if (!world.home) {
+      // 소파가 치워짐 → 일어난다
+      this.state = 'idle'
+      this.pauseTimer = 1
+      return
+    }
+    const { seatX, seatY } = world.home
+    if (Math.hypot(seatX - this.x, seatY - this.y) > 3) {
+      this.moving = this.moveToward(seatX, seatY, this.cfg.walkSpeed, dt)
+      return
+    }
+    this.x = seatX
+    this.y = seatY
+    this.sitTimer -= dt
+    if (this.sitTimer <= 0) {
+      this.state = 'idle'
+      this.pauseTimer = 2 + this.rng() * 4
+    }
   }
 
   private updateWatch(dt: number, world: World) {
@@ -502,12 +595,15 @@ export class Character {
     const ty = Math.max(b.minY, Math.min(b.maxY, this.watchTarget.y))
     if (Math.hypot(tx - this.x, ty - this.y) > 4) {
       this.moving = this.moveToward(tx, ty, this.cfg.walkSpeed, dt)
+      this.watchArrived = false
       return
     }
-    // 도착 — 구경
+    // 도착 — 뒤돌아서(화면 쪽을 보며) 구경
+    this.watchArrived = true
     this.watchTimer -= dt
     if (this.watchTimer <= 0) {
       this.watchTarget = null
+      this.watchArrived = false
       this.state = 'idle'
       this.pauseTimer = 1 + this.rng() * 3
     }
