@@ -110,6 +110,27 @@ export function startRelay({ port = 8787 } = {}) {
           toPeers(id, { t: 'chat', id, name: me.name, text })
           break
         }
+        // 화면 엿보기 (Phase 4): 요청/승인/거절/철회/시청 상태 + WebRTC 시그널.
+        // 서버는 내용을 보지 않고 같은 방의 지정 상대에게만 전달한다.
+        case 'peek-request':
+        case 'peek-grant':
+        case 'peek-deny':
+        case 'peek-revoke':
+        case 'peek-watch':
+        case 'rtc': {
+          const to = String(msg.to ?? '')
+          if (!rooms.peersOf(id).includes(to)) return // 같은 방이 아니면 무시
+          const target = clients.get(to)
+          if (!target) return
+          send(target.ws, {
+            t: msg.t,
+            from: id,
+            name: me.name,
+            watching: msg.watching,
+            payload: msg.payload,
+          })
+          break
+        }
       }
     })
 

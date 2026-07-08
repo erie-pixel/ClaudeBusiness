@@ -16,7 +16,7 @@ import {
   type BakedFrame,
 } from './engine/sprite'
 import { partsBySlot, type PartSlot } from './engine/parts'
-import { NetClient, type NetPeerInfo, type NetState } from './net/client'
+import { NetClient, type NetPeerInfo, type NetState, type PeekSignalType } from './net/client'
 import { PeerStore, type Peer } from './net/peers'
 import type { CompanionBridge, SofaState } from '../electron/preload'
 
@@ -199,6 +199,8 @@ const net = new NetClient({
     const name = peers.peers.get(id)?.name ?? '?'
     peers.remove(id)
     removeBubble(id)
+    cleanupPeekView(id)
+    closeShare(id)
     pushLog('알림', `${name} 님이 떠났어요`)
     refreshMpPanel()
   },
@@ -211,6 +213,9 @@ const net = new NetClient({
   },
   onEmote(id, sym) {
     peerEmotes.set(id, { text: sym, timer: 1.8 })
+  },
+  onPeek(type, from, name, watching, payload) {
+    handlePeekSignal(type, from, name, watching, payload)
   },
   onError(code) {
     netNotice = NET_ERRORS[code] ?? `오류: ${code}`
@@ -255,6 +260,7 @@ function leaveRoom() {
   peers.reset()
   clearBubbles()
   peerEmotes.clear()
+  cleanupAllPeeks()
   refreshMpPanel()
 }
 
@@ -345,12 +351,13 @@ function syncInteractive(cursor: { x: number; y: number }) {
     mpOpen ||
     historyOpen ||
     chatOpen ||
+    peekAsk !== null ||
     dragging ||
     sofaDragging ||
     pendingGrab !== null ||
     overCharacter(cursor.x, cursor.y) ||
     overSofa(cursor.x, cursor.y) ||
-    peers.near(cursor.x, cursor.y, W / 2) !== null
+    peerAt(cursor.x, cursor.y) !== null
   if (want !== interactive) {
     interactive = want
     bridge.setInteractive(want)
@@ -384,6 +391,7 @@ bridge.onCursor((pos) => {
     sofa.x = Math.max(0, Math.min(1 - r.w / canvas.width, sofa.x))
     sofa.y = Math.max(0, Math.min(1 - r.h / canvas.height, sofa.y))
   }
+  if (roomCode) updatePeekHover(pos)
   syncInteractive(pos)
 })
 
@@ -482,6 +490,9 @@ function buildMenu() {
           { label: '대화 기록', action: () => openHistory() },
         ]
       : []),
+    ...(shares.size > 0
+      ? [{ label: `화면 공유 중지 (${shares.size}명)`, action: () => revokeAllShares() }]
+      : []),
     sofa.enabled
       ? {
           label: '소파 치우기',
@@ -539,10 +550,51 @@ function closeMenu() {
   if (world.cursor) syncInteractive(world.cursor)
 }
 
+function buildPeerMenu(peer: Peer) {
+  menu.innerHTML = ''
+  menu.appendChild(el('div', 'w-title', peer.name))
+  const view = peekViews.get(peer.id)
+  const items: Array<{ label: string; action: () => void }> = []
+  if (view?.granted) {
+    items.push({ label: '화면 그만 보기', action: () => stopViewing(peer.id) })
+  } else if (peekPendingTo === peer.id) {
+    items.push({ label: '요청 승인 대기 중…', action: () => undefined })
+  } else {
+    items.push({ label: '화면 보여줘 요청', action: () => requestPeek(peer.id) })
+  }
+  items.push({ label: '대화 기록', action: () => openHistory() })
+  for (const item of items) {
+    const node = el('div', 'item', item.label)
+    node.addEventListener('click', () => {
+      item.action()
+      closeMenu()
+    })
+    menu.appendChild(node)
+  }
+}
+
+function openPeerMenu(peer: Peer, x: number, y: number) {
+  buildPeerMenu(peer)
+  menuOpen = true
+  menu.style.display = 'block'
+  menu.style.left = `${Math.min(x, canvas.width - 190)}px`
+  menu.style.top = `${Math.min(y, canvas.height - menu.offsetHeight - 8)}px`
+  bridge.setInteractive(true)
+  interactive = true
+}
+
 window.addEventListener('contextmenu', (e) => {
   e.preventDefault()
-  if (overCharacter(e.clientX, e.clientY)) openMenu(e.clientX + 8, e.clientY - 8)
-  else closeMenu()
+  if (overCharacter(e.clientX, e.clientY)) {
+    openMenu(e.clientX + 8, e.clientY - 8)
+    return
+  }
+  const peer = roomCode ? peerAt(e.clientX, e.clientY) : null
+  if (peer) {
+    openPeerMenu(peer, e.clientX + 8, e.clientY - 8)
+    return
+  }
+  closeMenu()
 })
 
 window.addEventListener('click', (e) => {
@@ -555,7 +607,7 @@ window.addEventListener('click', (e) => {
   // 그리면(innerHTML 교체) 이 핸들러 시점에는 target이 이미 DOM에서 떨어져
   // contains()가 false가 되어 옷장이 클릭할 때마다 닫혀버린다.
   const path = e.composedPath()
-  if (path.includes(menu) || path.includes(wardrobe) || path.includes(mp) || path.includes(history) || path.includes(chatWrap)) return
+  if (path.includes(menu) || path.includes(wardrobe) || path.includes(mp) || path.includes(history) || path.includes(chatWrap) || path.includes(peekReq)) return
   if (menuOpen) {
     closeMenu()
     return
@@ -982,6 +1034,292 @@ function updateBubbles(dt: number) {
   }
 }
 
+// ---------- 화면 엿보기 (Phase 4) — WebRTC P2P ----------
+// 흐름: 상대 캐릭터 우클릭 → 요청 → 상대의 명시적 승인 → 승인 후에는 상대
+// 캐릭터에 마우스를 올리는 동안만 화면이 보인다 (벗어나면 송출 일시정지).
+// 프라이버시: 공유 중 상시 표시, 시청 시작 알림, 언제든 원클릭 중지.
+
+const RTC_CONFIG: RTCConfiguration = {
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+}
+
+const peeksWrap = document.getElementById('peeks') as HTMLDivElement
+const peekReq = document.getElementById('peekreq') as HTMLDivElement
+
+// --- 보는 쪽 (viewer) ---
+interface PeekView {
+  pc: RTCPeerConnection | null
+  frame: HTMLDivElement
+  video: HTMLVideoElement
+  granted: boolean
+}
+const peekViews = new Map<string, PeekView>()
+let peekPendingTo: string | null = null
+let hoveredPeekId: string | null = null
+
+// --- 보여주는 쪽 (sender) ---
+interface ShareOut {
+  pc: RTCPeerConnection
+  track: MediaStreamTrack
+  name: string
+  notified: boolean
+}
+const shares = new Map<string, ShareOut>()
+let shareStream: MediaStream | null = null
+let peekAsk: { id: string; name: string } | null = null
+
+function requestPeek(peerId: string) {
+  if (peekPendingTo || peekViews.has(peerId)) return
+  peekPendingTo = peerId
+  net.sendPeek('peek-request', peerId)
+  pushLog('알림', '화면 보기를 요청했어요 — 상대의 승인을 기다리는 중')
+}
+
+function ensurePeekView(peerId: string): PeekView {
+  let view = peekViews.get(peerId)
+  if (view) return view
+  const frame = document.createElement('div')
+  frame.className = 'peekframe'
+  const video = document.createElement('video')
+  video.autoplay = true
+  video.muted = true
+  const label = document.createElement('div')
+  label.className = 'peeklabel'
+  label.textContent = peers.peers.get(peerId)?.name ?? '?'
+  frame.appendChild(video)
+  frame.appendChild(label)
+  peeksWrap.appendChild(frame)
+  view = { pc: null, frame, video, granted: false }
+  peekViews.set(peerId, view)
+  return view
+}
+
+function cleanupPeekView(peerId: string) {
+  const view = peekViews.get(peerId)
+  if (!view) return
+  view.pc?.close()
+  view.frame.remove()
+  peekViews.delete(peerId)
+  if (hoveredPeekId === peerId) hoveredPeekId = null
+  if (peekPendingTo === peerId) peekPendingTo = null
+}
+
+/** 보기 중지 (viewer가 스스로) — 상대에게도 알려 세션을 닫게 한다 */
+function stopViewing(peerId: string) {
+  net.sendPeek('peek-revoke', peerId)
+  cleanupPeekView(peerId)
+}
+
+async function grantPeek(viewerId: string, viewerName: string) {
+  try {
+    if (!shareStream) {
+      shareStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 8, width: { max: 960 }, height: { max: 540 } },
+        audio: false,
+      })
+    }
+  } catch {
+    net.sendPeek('peek-deny', viewerId)
+    pushLog('알림', '화면 캡처를 시작하지 못했어요')
+    return
+  }
+  const base = shareStream.getVideoTracks()[0]
+  const track = base.clone()
+  track.enabled = false // 상대가 hover하기 전까지 송출 정지
+  const pc = new RTCPeerConnection(RTC_CONFIG)
+  pc.addTrack(track, shareStream)
+  pc.onicecandidate = (e) => {
+    if (e.candidate) net.sendPeek('rtc', viewerId, { payload: { ice: e.candidate.toJSON() } })
+  }
+  shares.set(viewerId, { pc, track, name: viewerName, notified: false })
+  net.sendPeek('peek-grant', viewerId)
+  const offer = await pc.createOffer()
+  await pc.setLocalDescription(offer)
+  net.sendPeek('rtc', viewerId, { payload: { sdp: pc.localDescription } })
+  pushLog('알림', `${viewerName} 님에게 화면 공유를 시작했어요 (캐릭터 메뉴에서 중지 가능)`)
+}
+
+function closeShare(viewerId: string) {
+  const share = shares.get(viewerId)
+  if (!share) return
+  share.pc.close()
+  share.track.stop()
+  shares.delete(viewerId)
+  if (shares.size === 0 && shareStream) {
+    for (const t of shareStream.getTracks()) t.stop()
+    shareStream = null
+  }
+}
+
+function revokeAllShares() {
+  for (const viewerId of [...shares.keys()]) {
+    net.sendPeek('peek-revoke', viewerId)
+    closeShare(viewerId)
+  }
+}
+
+function cleanupAllPeeks() {
+  for (const id of [...peekViews.keys()]) cleanupPeekView(id)
+  for (const id of [...shares.keys()]) closeShare(id)
+  peekPendingTo = null
+  peekAsk = null
+  peekReq.style.display = 'none'
+}
+
+function showPeekAsk(id: string, name: string) {
+  peekAsk = { id, name }
+  peekReq.innerHTML = ''
+  peekReq.appendChild(el('div', 'w-title', '화면 보기 요청'))
+  peekReq.appendChild(el('div', 'w-note', `${name} 님이 내 화면을 보고 싶어해요.`))
+  peekReq.appendChild(
+    el('div', 'w-note', '허용하면 상대가 내 캐릭터에 마우스를 올린 동안 화면 전체가 낮은 화질로 보여요. 공유 중에는 캐릭터에 ● 표시가 뜨고, 언제든 중지할 수 있어요.'),
+  )
+  const row = el('div', 'w-row')
+  const allow = el('button', 'w-btn', '허용')
+  allow.addEventListener('click', () => {
+    peekReq.style.display = 'none'
+    if (peekAsk) grantPeek(peekAsk.id, peekAsk.name)
+    peekAsk = null
+    if (world.cursor) syncInteractive(world.cursor)
+  })
+  const deny = el('button', 'w-btn', '거절')
+  deny.addEventListener('click', () => {
+    peekReq.style.display = 'none'
+    if (peekAsk) net.sendPeek('peek-deny', peekAsk.id)
+    peekAsk = null
+    if (world.cursor) syncInteractive(world.cursor)
+  })
+  row.appendChild(allow)
+  row.appendChild(deny)
+  peekReq.appendChild(row)
+  peekReq.style.display = 'block'
+  peekReq.style.left = `${Math.min(Math.max(8, char.x - 130), canvas.width - 290)}px`
+  peekReq.style.top = `${Math.min(Math.max(8, char.y - H - 170), canvas.height - 200)}px`
+  bridge.setInteractive(true)
+  interactive = true
+}
+
+async function handlePeekSignal(
+  type: PeekSignalType,
+  from: string,
+  name: string,
+  watching?: boolean,
+  payload?: unknown,
+) {
+  switch (type) {
+    case 'peek-request':
+      showPeekAsk(from, name)
+      break
+    case 'peek-grant': {
+      if (peekPendingTo === from) peekPendingTo = null
+      const view = ensurePeekView(from)
+      view.granted = true
+      pushLog('알림', `${name} 님이 화면 보기를 허용했어요 — 캐릭터에 마우스를 올려 보세요`)
+      char.messages.push('!')
+      break
+    }
+    case 'peek-deny':
+      if (peekPendingTo === from) peekPendingTo = null
+      pushLog('알림', `${name} 님이 화면 보기를 거절했어요`)
+      char.messages.push('…')
+      break
+    case 'peek-revoke':
+      // 상대가 공유를 중지했거나 (sender), 시청자가 그만 보기로 함 (viewer)
+      cleanupPeekView(from)
+      closeShare(from)
+      break
+    case 'peek-watch': {
+      const share = shares.get(from)
+      if (!share) return
+      share.track.enabled = watching === true
+      if (watching && !share.notified) {
+        share.notified = true
+        pushLog('알림', `${share.name} 님이 지금 내 화면을 보고 있어요`)
+        char.messages.push('!')
+      }
+      break
+    }
+    case 'rtc': {
+      const data = payload as { sdp?: RTCSessionDescriptionInit; ice?: RTCIceCandidateInit }
+      if (!data) return
+      // sender 쪽: answer/ICE 수신
+      const share = shares.get(from)
+      if (share && data.sdp?.type === 'answer') {
+        await share.pc.setRemoteDescription(data.sdp)
+        return
+      }
+      if (share && data.ice) {
+        await share.pc.addIceCandidate(data.ice).catch(() => undefined)
+        return
+      }
+      // viewer 쪽: offer/ICE 수신
+      const view = ensurePeekView(from)
+      if (data.sdp?.type === 'offer') {
+        const pc = new RTCPeerConnection(RTC_CONFIG)
+        view.pc = pc
+        pc.ontrack = (e) => {
+          view.video.srcObject = e.streams[0] ?? new MediaStream([e.track])
+        }
+        pc.onicecandidate = (e) => {
+          if (e.candidate) net.sendPeek('rtc', from, { payload: { ice: e.candidate.toJSON() } })
+        }
+        await pc.setRemoteDescription(data.sdp)
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        net.sendPeek('rtc', from, { payload: { sdp: pc.localDescription } })
+      } else if (data.ice && view.pc) {
+        await view.pc.addIceCandidate(data.ice).catch(() => undefined)
+      }
+      break
+    }
+  }
+}
+
+/** 커서가 어느 친구 캐릭터 스프라이트 위에 있는지 (바운딩 박스) */
+function peerAt(px: number, py: number): Peer | null {
+  for (const peer of peers.peers.values()) {
+    if (!peer.hasState || Number.isNaN(peer.x)) continue
+    if (px >= peer.x - W / 2 && px <= peer.x + W / 2 && py >= peer.y - H && py <= peer.y) {
+      return peer
+    }
+  }
+  return null
+}
+
+/** hover 상태 변화 → 시청 시작/정지 신호 + 액자 표시 */
+function updatePeekHover(cursor: { x: number; y: number }) {
+  const over = peerAt(cursor.x, cursor.y)
+  const id = over?.id ?? null
+  if (id === hoveredPeekId) return
+  if (hoveredPeekId) {
+    const prev = peekViews.get(hoveredPeekId)
+    if (prev?.granted) {
+      net.sendPeek('peek-watch', hoveredPeekId, { watching: false })
+      prev.frame.style.display = 'none'
+    }
+  }
+  hoveredPeekId = id
+  if (id) {
+    const view = peekViews.get(id)
+    if (view?.granted) {
+      net.sendPeek('peek-watch', id, { watching: true })
+      view.frame.style.display = 'block'
+    }
+  }
+}
+
+/** 액자 위치를 피어 캐릭터 위에 유지 */
+function updatePeekFrames() {
+  if (!hoveredPeekId) return
+  const view = peekViews.get(hoveredPeekId)
+  const peer = peers.peers.get(hoveredPeekId)
+  if (!view || !peer || view.frame.style.display === 'none') return
+  const fw = view.frame.offsetWidth || 264
+  const fh = view.frame.offsetHeight || 170
+  view.frame.style.left = `${Math.min(Math.max(4, peer.x - fw / 2), canvas.width - fw - 4)}px`
+  view.frame.style.top = `${Math.max(4, peer.y - H - fh - 10)}px`
+}
+
 // ---------- 이모트 (텍스트 박스 없이 심볼만) ----------
 
 let emoteText: string | null = null
@@ -1185,6 +1523,22 @@ function draw() {
 
   drawEmote()
   drawPeerEmotes(dtForDraw)
+
+  // 화면 공유 중 상시 표시 — 몰래 공유되는 일이 없도록 (프라이버시 원칙)
+  if (shares.size > 0) {
+    const live = [...shares.values()].some((s) => s.track.enabled)
+    const blink = Math.floor(animTime * 2) % 2 === 0
+    ctx.save()
+    ctx.fillStyle = blink ? '#ff4d5e' : '#b32836'
+    ctx.beginPath()
+    ctx.arc(char.x - W / 2 - 6, char.y - H + 4, 4, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.font = 'bold 10px monospace'
+    ctx.textAlign = 'left'
+    ctx.fillStyle = '#ff8b96'
+    ctx.fillText(live ? 'LIVE' : '공유중', char.x - W / 2 - 2, char.y - H + 20)
+    ctx.restore()
+  }
 }
 
 let dtForDraw = 0
@@ -1227,6 +1581,7 @@ function loop(now: number) {
       }
     }
     if (chatOpen) positionChat()
+    updatePeekFrames()
   }
   updateBubbles(dt)
 

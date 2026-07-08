@@ -25,9 +25,28 @@ export interface NetCallbacks {
   onPeerState(id: string, state: NetState): void
   onChat(id: string, name: string, text: string): void
   onEmote(id: string, sym: string): void
+  /** 화면 엿보기 시그널 (요청/승인/거절/철회/시청 상태/WebRTC) */
+  onPeek(type: PeekSignalType, from: string, name: string, watching?: boolean, payload?: unknown): void
   onError(code: string): void
   onClose(): void
 }
+
+export type PeekSignalType =
+  | 'peek-request'
+  | 'peek-grant'
+  | 'peek-deny'
+  | 'peek-revoke'
+  | 'peek-watch'
+  | 'rtc'
+
+const PEEK_TYPES: ReadonlySet<string> = new Set([
+  'peek-request',
+  'peek-grant',
+  'peek-deny',
+  'peek-revoke',
+  'peek-watch',
+  'rtc',
+])
 
 export class NetClient {
   private ws: WebSocket | null = null
@@ -78,6 +97,22 @@ export class NetClient {
         case 'emote':
           this.cb.onEmote(msg.id as string, msg.sym as string)
           break
+        case 'peek-request':
+        case 'peek-grant':
+        case 'peek-deny':
+        case 'peek-revoke':
+        case 'peek-watch':
+        case 'rtc':
+          if (PEEK_TYPES.has(msg.t as string)) {
+            this.cb.onPeek(
+              msg.t as PeekSignalType,
+              msg.from as string,
+              (msg.name as string) ?? '?',
+              msg.watching as boolean | undefined,
+              msg.payload,
+            )
+          }
+          break
         case 'error':
           this.cb.onError(msg.code as string)
           break
@@ -104,6 +139,10 @@ export class NetClient {
 
   sendEmote(sym: string) {
     this.send({ t: 'emote', sym })
+  }
+
+  sendPeek(type: PeekSignalType, to: string, extra?: { watching?: boolean; payload?: unknown }) {
+    this.send({ t: type, to, ...extra })
   }
 
   disconnect() {

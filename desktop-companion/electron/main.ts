@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage, globalShortcut } from 'electron'
+import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage, globalShortcut, session, desktopCapturer } from 'electron'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import { startFullscreenWatcher, stopFullscreenWatcher } from './fullscreen-win'
@@ -252,6 +252,17 @@ app.whenReady().then(() => {
   applyAutoStart()
   createWindow()
   createTray()
+  // 화면 엿보기(Phase 4): 렌더러의 getDisplayMedia 요청에 주 화면을 공급.
+  // 실제 공유는 상대의 명시적 승인 후에만 시작된다 (renderer의 승인 패널).
+  session.defaultSession.setDisplayMediaRequestHandler(
+    (_request, callback) => {
+      desktopCapturer
+        .getSources({ types: ['screen'] })
+        .then((sources) => callback({ video: sources[0] }))
+        .catch(() => callback({}))
+    },
+    { useSystemPicker: false },
+  )
   // 채팅 전역 단축키 (방에 있을 때 렌더러가 입력창을 연다)
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
     win?.webContents.send('open-chat')
