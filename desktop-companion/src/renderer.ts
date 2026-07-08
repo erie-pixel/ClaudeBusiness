@@ -5,7 +5,7 @@ import {
   HEART,
   SPRITE_W,
   SPRITE_H,
-  SCALE,
+  DEFAULT_SCALE,
   type FrameName,
   type BakedFrame,
 } from './engine/sprite'
@@ -39,14 +39,25 @@ const frames: Record<FrameName, BakedFrame> = {
   pant: bakeFrame('pant'),
   heldA: bakeFrame('heldA'),
   heldB: bakeFrame('heldB'),
+  workA: bakeFrame('workA'),
+  workB: bakeFrame('workB'),
 }
 const heart = bakeMap(HEART, 7, 6)
 
-const W = SPRITE_W * SCALE
-const H = SPRITE_H * SCALE
-const EDGE = 4
+// 표시 배율 — 트레이 설정으로 런타임 변경 가능
+let SCALE = DEFAULT_SCALE
+let W = SPRITE_W * SCALE
+let H = SPRITE_H * SCALE
 /** 집었을 때 커서(=잡은 손)가 머리에 얼마나 파고드는지 */
-const GRIP = 2 * SCALE
+let GRIP = 2 * SCALE
+const EDGE = 4
+
+function applyScale(scale: number) {
+  SCALE = scale
+  W = SPRITE_W * SCALE
+  H = SPRITE_H * SCALE
+  GRIP = 2 * SCALE
+}
 
 function computeBounds() {
   return {
@@ -59,8 +70,19 @@ function computeBounds() {
 const world = {
   cursor: null as { x: number; y: number } | null,
   bounds: computeBounds(),
+  userActive: false,
 }
 const char = new Character(canvas.width / 2, canvas.height * 0.7)
+
+// 트레이 설정 반영 (시작 시 + 변경 시)
+bridge.onSettings((s) => {
+  applyScale(s.scale)
+  char.applyActivity(s.activity)
+})
+
+// 사용자 활동 감지: 커서가 최근에 움직였는가 (Co-work 트리거)
+let lastCursorMoveAt = 0
+let prevCursor: { x: number; y: number } | null = null
 
 // ---------- 클릭통과 <-> 상호작용 전환 ----------
 
@@ -93,6 +115,10 @@ function syncInteractive(cursor: { x: number; y: number }) {
 }
 
 bridge.onCursor((pos) => {
+  if (prevCursor && (Math.abs(pos.x - prevCursor.x) > 1 || Math.abs(pos.y - prevCursor.y) > 1)) {
+    lastCursorMoveAt = performance.now()
+  }
+  prevCursor = pos
   world.cursor = pos
   if (dragging) {
     // 머리를 잡고 있으므로 발 위치 = 커서 아래쪽
@@ -268,6 +294,8 @@ function currentFrame(): BakedFrame {
   switch (char.pose) {
     case 'held':
       return Math.floor(animTime * 8) % 2 === 0 ? frames.heldA : frames.heldB
+    case 'work':
+      return Math.floor(animTime * 4) % 2 === 0 ? frames.workA : frames.workB
     case 'sleep':
       return frames.sleep
     case 'pant':
@@ -338,6 +366,7 @@ function loop(now: number) {
   if (blinkTimer < 0) blinkTimer = 2 + Math.random() * 3
 
   world.bounds = computeBounds()
+  world.userActive = performance.now() - lastCursorMoveAt < 5000
   char.update(dt, world)
   updateBubble(dt)
 

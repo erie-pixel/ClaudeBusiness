@@ -4,7 +4,8 @@
 
 export const SPRITE_W = 16
 export const SPRITE_H = 24
-export const SCALE = 3
+/** 기본 표시 배율 — 설정(트레이 메뉴)에서 2/3/4x 변경 가능 */
+export const DEFAULT_SCALE = 2
 
 const PALETTE: Record<string, string> = {
   K: '#4a3728', // hair
@@ -16,6 +17,8 @@ const PALETTE: Record<string, string> = {
   P: '#3d4a63', // pants
   B: '#8a5a3b', // shoes
   H: '#e85d75', // heart
+  D: '#3a3f52', // laptop body
+  W: '#cfe6ff', // laptop screen glow
 }
 
 // 몸통(머리~허리, 17행) — 다리 변형과 조합해 24행 프레임을 만든다
@@ -82,6 +85,27 @@ const LEGS_FLAIL_B = [
   '................',
 ]
 
+// 앉아서 무릎 위 노트북으로 타이핑 (Co-work)
+const LEGS_WORK_A = [
+  '....PPPPPPPP....',
+  '...PPPPPPPPPP...',
+  '..DDDDDDDDDDD...',
+  '..DWWWWWWWWWD...',
+  '..DDDDDDDDDDD...',
+  '...BB.....BB....',
+  '................',
+]
+
+const LEGS_WORK_B = [
+  '....PPPPPPPP....',
+  '...PPPPPPPPPP...',
+  '..DDDDDDDDDDD...',
+  '..DWWWWWWWWWD...',
+  '..DDDDDDDDDDD...',
+  '....BB...BB.....',
+  '................',
+]
+
 export const HEART = ['.HH.HH.', 'HHHHHHH', 'HHHHHHH', '.HHHHH.', '..HHH..', '...H...']
 
 export type FrameName =
@@ -93,6 +117,8 @@ export type FrameName =
   | 'pant'
   | 'heldA'
   | 'heldB'
+  | 'workA'
+  | 'workB'
 
 function closeEyes(rows: string[]): string[] {
   return rows.map((r) => r.replace(/E/g, 'L'))
@@ -107,6 +133,8 @@ const FRAME_MAPS: Record<FrameName, string[]> = {
   pant: [...closeEyes(BODY), ...LEGS_IDLE], // 렌더 시 웅크림 오프셋 + 땀방울
   heldA: [...BODY, ...LEGS_FLAIL_A], // 렌더 시 머리 잡힘 피벗으로 살랑살랑
   heldB: [...BODY, ...LEGS_FLAIL_B],
+  workA: [...BODY, ...LEGS_WORK_A],
+  workB: [...BODY, ...LEGS_WORK_B],
 }
 
 export interface BakedFrame {

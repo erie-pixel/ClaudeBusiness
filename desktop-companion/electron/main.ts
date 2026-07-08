@@ -1,10 +1,31 @@
 import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage } from 'electron'
 import * as path from 'node:path'
 import { startFullscreenWatcher, stopFullscreenWatcher } from './fullscreen-win'
+import { loadSettings, saveSettings, type AppSettings } from './settings'
 
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
 let cursorTimer: NodeJS.Timeout | null = null
+let settings: AppSettings = { autoStart: false, scale: 2, activity: 'calm' }
+
+function pushSettings() {
+  if (!win || win.isDestroyed()) return
+  win.webContents.send('settings', { scale: settings.scale, activity: settings.activity })
+}
+
+function applyAutoStart() {
+  // 개발 모드(npm start)에서는 실행 파일이 electron이라 무의미하지만 무해함.
+  // 패키징 빌드에서 실제로 동작한다.
+  app.setLoginItemSettings({ openAtLogin: settings.autoStart })
+}
+
+function updateSettings(patch: Partial<AppSettings>) {
+  settings = { ...settings, ...patch }
+  saveSettings(settings)
+  applyAutoStart()
+  pushSettings()
+  rebuildTrayMenu()
+}
 
 // 숨김 사유를 분리 관리: 사용자가 직접 숨긴 것과 전체화면 자동 숨김은 독립적
 let manualHidden = false
@@ -58,6 +79,7 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, '../renderer/index.html'))
   win.once('ready-to-show', () => win?.showInactive())
+  win.webContents.on('did-finish-load', pushSettings)
 
   // forward 옵션의 mousemove 전달은 플랫폼별 편차가 있어(특히 통과 모드 전환 직후),
   // 커서 좌표는 메인 프로세스 폴링으로 일원화해서 렌더러에 밀어준다.
@@ -103,6 +125,23 @@ function createTray() {
   const icon = nativeImage.createFromBitmap(buf, { width: size, height: size })
   tray = new Tray(icon)
   tray.setToolTip('바탕화면 키우기')
+  rebuildTrayMenu()
+}
+
+function rebuildTrayMenu() {
+  if (!tray) return
+  const scaleItem = (label: string, value: 2 | 3 | 4) => ({
+    label,
+    type: 'radio' as const,
+    checked: settings.scale === value,
+    click: () => updateSettings({ scale: value }),
+  })
+  const activityItem = (label: string, value: AppSettings['activity']) => ({
+    label,
+    type: 'radio' as const,
+    checked: settings.activity === value,
+    click: () => updateSettings({ activity: value }),
+  })
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
@@ -113,6 +152,25 @@ function createTray() {
         },
       },
       { type: 'separator' },
+      {
+        label: '캐릭터 크기',
+        submenu: [scaleItem('작게', 2), scaleItem('보통', 3), scaleItem('크게', 4)],
+      },
+      {
+        label: '활동성',
+        submenu: [
+          activityItem('차분함', 'calm'),
+          activityItem('보통', 'normal'),
+          activityItem('활발함', 'active'),
+        ],
+      },
+      {
+        label: '부팅 시 자동 시작',
+        type: 'checkbox',
+        checked: settings.autoStart,
+        click: () => updateSettings({ autoStart: !settings.autoStart }),
+      },
+      { type: 'separator' },
       { label: '종료', click: () => app.quit() },
     ]),
   )
@@ -121,6 +179,8 @@ function createTray() {
 app.whenReady().then(() => {
   // macOS: 독에 표시되지 않는 상주형 앱
   app.dock?.hide()
+  settings = loadSettings()
+  applyAutoStart()
   createWindow()
   createTray()
   // 전체화면 앱(유튜브 전체화면, 게임 등) 감지 시 캐릭터 자동 숨김 — 방해하지 않음 원칙

@@ -6,6 +6,7 @@ const CY = 500 // 테스트 기본 y (커서를 같은 y에 두면 거리 계산
 const makeWorld = (cursorX: number | null = null, cursorY = CY): World => ({
   cursor: cursorX === null ? null : { x: cursorX, y: cursorY },
   bounds: { minX: 0, maxX: 2000, minY: 0, maxY: 1000 },
+  userActive: false,
 })
 
 /** dt를 잘게 쪼개 seconds초 동안 시뮬레이션 */
@@ -227,6 +228,70 @@ describe('스탯 시스템', () => {
     simulate(day, makeWorld(), 60)
     simulate(night, makeWorld(), 60)
     expect(night.sleepiness).toBeGreaterThan(day.sleepiness)
+  })
+})
+
+describe('같이 일하기 (cowork)', () => {
+  it('사용자 활동이 이어지면 자리 잡고 타이핑하고, 손을 놓으면 그만둔다', () => {
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      coworkThreshold: 2,
+      coworkChance: 1,
+      coworkTimeMin: 600,
+      coworkTimeMax: 600,
+      coworkIdleGrace: 5,
+    }
+    // rng 0.4 > watchChance(0.3) → 창 알림은 자리 기억용으로만 쓰임
+    const char = new Character(0, 300, cfg, () => 0.4)
+    char.state = 'idle'
+    char.notifyActiveWindow({ x: 300, y: 300 })
+    expect(char.state).toBe('idle')
+    const world = makeWorld()
+    world.userActive = true
+    simulate(char, world, 4)
+    expect(char.state).toBe('cowork')
+    expect(char.messages).toContain('나도 일할래!')
+    simulate(char, world, 20) // 자리(창 옆 +110)까지 걸어가 타이핑
+    expect(char.pose).toBe('work')
+    // 사용자가 손을 놓으면 grace 후 그만둠
+    world.userActive = false
+    simulate(char, world, cfg.coworkIdleGrace + 2)
+    expect(char.state).not.toBe('cowork')
+    expect(char.messages).toContain('쉬는 거야?')
+  })
+
+  it('예정된 시간이 끝나면 스스로 마무리한다', () => {
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      coworkThreshold: 1,
+      coworkChance: 1,
+      coworkTimeMin: 3,
+      coworkTimeMax: 3,
+    }
+    const char = new Character(0, 300, cfg, () => 0.4)
+    char.state = 'idle'
+    char.notifyActiveWindow({ x: 100, y: 300 })
+    const world = makeWorld()
+    world.userActive = true
+    simulate(char, world, 2)
+    expect(char.state).toBe('cowork')
+    simulate(char, world, 15)
+    expect(char.state).not.toBe('cowork')
+    expect(char.messages).toContain('오늘도 열일!')
+  })
+})
+
+describe('활동성 프리셋', () => {
+  it('활발함 프리셋은 차분함보다 걸음이 빠르다', () => {
+    const calm = new Character(0, CY, DEFAULT_CONFIG, () => 0.5)
+    const active = new Character(0, CY, DEFAULT_CONFIG, () => 0.5)
+    active.applyActivity('active')
+    calm.commandFollow()
+    active.commandFollow()
+    const world = makeWorld(300)
+    simulate(calm, world, 1)
+    simulate(active, world, 1)
+    expect(active.x).toBeGreaterThan(calm.x)
   })
 })
 

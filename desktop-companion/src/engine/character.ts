@@ -11,6 +11,7 @@ export type StateName =
   | 'stay'
   | 'held' // 마우스로 집어든 상태 — 위치는 렌더러가 커서로 직접 제어
   | 'watch' // 활성 창 쳐다보기
+  | 'cowork' // 사용자가 일하는 동안 옆에서 같이 일하기
 
 export interface Bounds {
   minX: number
@@ -24,6 +25,8 @@ export interface World {
   cursor: { x: number; y: number } | null
   /** 캐릭터 발 위치가 다닐 수 있는 영역 */
   bounds: Bounds
+  /** 사용자가 지금 활동 중인가 (최근 커서 움직임 기준, 렌더러가 계산) */
+  userActive: boolean
 }
 
 export interface CharacterConfig {
@@ -55,10 +58,17 @@ export interface CharacterConfig {
   watchChance: number // 활성 창 전환 시 쳐다보러 갈 확률
   watchTimeMin: number // 구경 시간 (s)
   watchTimeMax: number
+  // ---- 같이 일하기 (Co-work) ----
+  coworkThreshold: number // 사용자 활동 누적이 이 시간(s)을 넘으면 발동 후보
+  coworkChance: number // 후보가 됐을 때 실제 발동 확률
+  coworkTimeMin: number // 같이 일하는 시간 (s)
+  coworkTimeMax: number
+  coworkIdleGrace: number // 사용자가 이 시간(s) 이상 손을 놓으면 일 그만둠
 }
 
+// 기본값은 '차분함' — 상주 앱이므로 존재감은 있되 부산스럽지 않게
 export const DEFAULT_CONFIG: CharacterConfig = {
-  walkSpeed: 42,
+  walkSpeed: 36,
   runSpeed: 150,
   runDistance: 420,
   arriveDistance: 36,
@@ -67,8 +77,8 @@ export const DEFAULT_CONFIG: CharacterConfig = {
   staminaRegen: 6,
   staminaNapRegen: 16,
   exhaustedRecoverAt: 35,
-  wanderPauseMin: 2,
-  wanderPauseMax: 8,
+  wanderPauseMin: 8,
+  wanderPauseMax: 25,
   hungerRate: 100 / (3.5 * 3600), // ~3.5시간에 만배고픔
   hungerFeedRelief: 70,
   hungryAt: 80,
@@ -77,13 +87,45 @@ export const DEFAULT_CONFIG: CharacterConfig = {
   sleepinessNapRelief: 0.9,
   autoNapAt: 85,
   napWakeAt: 10,
-  watchChance: 0.5,
+  watchChance: 0.3,
   watchTimeMin: 6,
   watchTimeMax: 14,
+  coworkThreshold: 150,
+  coworkChance: 0.6,
+  coworkTimeMin: 60,
+  coworkTimeMax: 180,
+  coworkIdleGrace: 20,
+}
+
+/** 트레이 메뉴에서 고르는 활동성 프리셋 */
+export type ActivityLevel = 'calm' | 'normal' | 'active'
+
+export const ACTIVITY_PRESETS: Record<ActivityLevel, Partial<CharacterConfig>> = {
+  calm: {
+    walkSpeed: 36,
+    wanderPauseMin: 8,
+    wanderPauseMax: 25,
+    watchChance: 0.3,
+    coworkThreshold: 150,
+  },
+  normal: {
+    walkSpeed: 42,
+    wanderPauseMin: 4,
+    wanderPauseMax: 14,
+    watchChance: 0.5,
+    coworkThreshold: 100,
+  },
+  active: {
+    walkSpeed: 48,
+    wanderPauseMin: 2,
+    wanderPauseMax: 8,
+    watchChance: 0.65,
+    coworkThreshold: 60,
+  },
 }
 
 /** 렌더러가 애니메이션을 고르는 데 쓰는 표시용 상태 */
-export type Pose = 'idle' | 'walk' | 'run' | 'pant' | 'sleep' | 'held'
+export type Pose = 'idle' | 'walk' | 'run' | 'pant' | 'sleep' | 'held' | 'work'
 
 export class Character {
   x: number
@@ -111,6 +153,13 @@ export class Character {
   private hungrySayCooldown = 0
   private watchTarget: { x: number; y: number } | null = null
   private watchTimer = 0
+  private lastWindowPoint: { x: number; y: number } | null = null
+  private workDesire = 0
+  private coworkTarget: { x: number; y: number } | null = null
+  private coworkTimer = 0
+  private coworkIdleFor = 0
+  /** 한 번 일하고 나면 잠시 쉬는 재발동 쿨다운 (s) */
+  private coworkCooldown = 0
 
   constructor(
     x: number,
@@ -121,10 +170,15 @@ export class Character {
   ) {
     this.x = x
     this.y = y
-    this.cfg = cfg
+    this.cfg = { ...cfg }
     this.rng = rng
     this.getHour = getHour
-    this.stamina = cfg.staminaMax
+    this.stamina = this.cfg.staminaMax
+  }
+
+  /** 활동성 프리셋 적용 (트레이 설정) */
+  applyActivity(level: ActivityLevel) {
+    Object.assign(this.cfg, ACTIVITY_PRESETS[level])
   }
 
   private say(text: string) {
@@ -188,6 +242,7 @@ export class Character {
 
   /** 활성 창이 바뀌었다는 알림 → 확률적으로 구경하러 감 */
   notifyActiveWindow(point: { x: number; y: number }) {
+    this.lastWindowPoint = point // Co-work 자리 선정에도 사용
     if (this.state === 'watch') {
       this.watchTarget = point // 이미 구경 중이면 새 창으로 관심 이동
       return
@@ -212,6 +267,8 @@ export class Character {
         return 'pant'
       case 'follow':
         return this.moving ? (this.running ? 'run' : 'walk') : 'idle'
+      case 'cowork':
+        return this.moving ? 'walk' : 'work'
       case 'wander':
       case 'watch':
         return this.moving ? 'walk' : 'idle'
@@ -249,6 +306,10 @@ export class Character {
         this.updateWatch(dt, world)
         this.regen(dt)
         break
+      case 'cowork':
+        this.updateCowork(dt, world)
+        this.regen(dt)
+        break
       case 'wander':
         this.updateWander(dt, world)
         this.regen(dt)
@@ -273,6 +334,28 @@ export class Character {
     ) {
       this.state = 'nap'
       this.say('졸려…')
+    }
+
+    // 같이 일하기: 사용자 활동이 꾸준히 이어지면 옆에 와서 같이 일한다
+    if (this.coworkCooldown > 0) this.coworkCooldown -= dt
+    if (this.state !== 'cowork') {
+      if (world.userActive) this.workDesire += dt
+      else this.workDesire = Math.max(0, this.workDesire - dt * 0.5)
+    }
+    if (
+      this.workDesire >= this.cfg.coworkThreshold &&
+      this.coworkCooldown <= 0 &&
+      (this.state === 'wander' || this.state === 'idle')
+    ) {
+      this.workDesire = 0
+      if (this.rng() < this.cfg.coworkChance) {
+        this.state = 'cowork'
+        this.coworkTarget = null
+        this.coworkTimer =
+          this.cfg.coworkTimeMin + this.rng() * (this.cfg.coworkTimeMax - this.cfg.coworkTimeMin)
+        this.coworkIdleFor = 0
+        this.say('나도 일할래!')
+      }
     }
 
     const b = world.bounds
@@ -360,6 +443,52 @@ export class Character {
       return
     }
     this.moving = this.moveToward(t.x, t.y, this.cfg.walkSpeed, dt)
+  }
+
+  private updateCowork(dt: number, world: World) {
+    const b = world.bounds
+    if (!this.coworkTarget) {
+      // 활성 창 상단 한쪽 구석, 없으면 커서 옆자리
+      const base = this.lastWindowPoint ?? world.cursor
+      if (!base) {
+        this.state = 'idle'
+        this.pauseTimer = 1
+        return
+      }
+      this.coworkTarget = {
+        x: Math.max(b.minX, Math.min(b.maxX, base.x + 110)),
+        y: Math.max(b.minY, Math.min(b.maxY, base.y)),
+      }
+    }
+    const t = this.coworkTarget
+    if (Math.hypot(t.x - this.x, t.y - this.y) > 4) {
+      this.moving = this.moveToward(t.x, t.y, this.cfg.walkSpeed, dt)
+      return
+    }
+    // 자리 잡고 타이핑
+    this.coworkTimer -= dt
+    if (world.userActive) {
+      this.coworkIdleFor = 0
+    } else {
+      this.coworkIdleFor += dt
+      if (this.coworkIdleFor >= this.cfg.coworkIdleGrace) {
+        this.endCowork(2)
+        this.say('쉬는 거야?')
+        return
+      }
+    }
+    if (this.coworkTimer <= 0) {
+      this.endCowork(2 + this.rng() * 4)
+      this.say('오늘도 열일!')
+    }
+  }
+
+  private endCowork(pause: number) {
+    this.coworkTarget = null
+    this.state = 'idle'
+    this.pauseTimer = pause
+    this.workDesire = 0
+    this.coworkCooldown = 60 // 방금 일했으니 당분간은 다시 안 옴
   }
 
   private updateWatch(dt: number, world: World) {

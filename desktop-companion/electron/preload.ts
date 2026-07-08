@@ -1,8 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+export interface RendererSettings {
+  scale: number
+  activity: 'calm' | 'normal' | 'active'
+}
+
 export interface CompanionBridge {
   onCursor(cb: (pos: { x: number; y: number }) => void): void
   onActiveWindow(cb: (rect: { x: number; y: number; w: number; h: number }) => void): void
+  onSettings(cb: (s: RendererSettings) => void): void
   setInteractive(interactive: boolean): void
   setPollRate(active: boolean): void
   hideWindow(): void
@@ -15,6 +21,9 @@ const bridge: CompanionBridge = {
   },
   onActiveWindow: (cb) => {
     ipcRenderer.on('active-window', (_e, rect) => cb(rect))
+  },
+  onSettings: (cb) => {
+    ipcRenderer.on('settings', (_e, s) => cb(s))
   },
   setInteractive: (v) => ipcRenderer.send('set-interactive', v),
   setPollRate: (active) => ipcRenderer.send('set-poll-rate', active),
