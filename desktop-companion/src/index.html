@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>바탕화면 키우기</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: transparent;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #stage {
+        position: absolute;
+        inset: 0;
+        image-rendering: pixelated;
+      }
+      #menu {
+        display: none;
+        position: absolute;
+        min-width: 150px;
+        background: #1d1f2b;
+        border: 3px solid #454a66;
+        box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        font-weight: bold;
+        color: #e8e9f5;
+        padding: 4px;
+        image-rendering: pixelated;
+      }
+      #menu .item {
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      #menu .item:hover {
+        background: #5b8bd9;
+        color: #fff;
+      }
+      #menu .sep {
+        height: 2px;
+        background: #454a66;
+        margin: 4px 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+    <div id="menu"></div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
