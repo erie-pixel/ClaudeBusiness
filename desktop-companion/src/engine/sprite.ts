@@ -124,12 +124,13 @@ const LEGS_WALK_CONTACT = [
 ]
 const LEGS_WALK_CONTACT_R = LEGS_WALK_CONTACT.map((row) => row.split('').reverse().join(''))
 
-// 걷기 지나감 (다리 모임, 뒷발 들림 — 몸이 반 박자 위로)
+// 걷기 지나감 — 양다리가 허벅지 중간에서 교차(X)한 뒤 다시 벌어지며 발로 이어진다.
+// 뒷발은 아직 들려 있음 (몸이 반 박자 위로)
 const LEGS_WALK_PASS = [
   '....PPPPPPPP....',
-  '....PPPPPPP.....',
-  '....PPP.PPP.....',
-  '....PPP..PPP....',
+  '.....PPPPPP.....',
+  '......PPPP......', // 교차점 — 두 다리가 한 다리처럼 겹쳐 보인다
+  '.....PPPPPP.....',
   '....PPP..PPP....',
   '...BBBB..BBB....',
   '...BBBB.........',
@@ -146,13 +147,13 @@ const LEGS_RUN_CONTACT = [
 ]
 const LEGS_RUN_CONTACT_R = LEGS_RUN_CONTACT.map((row) => row.split('').reverse().join(''))
 
-// 달리기 공중 (양다리 접힘, 발이 바닥에서 2px 떠 있음)
+// 달리기 공중 — 양다리가 교차(X)하며 접혀 올라온 상태. 발이 바닥에서 2px 떠 있음
 const LEGS_RUN_TUCK = [
   '....PPPPPPPP....',
-  '...PPPP..PPPP...',
-  '..PPPP....PPPP..',
-  '..BBB......BBB..',
-  '..BBB......BBB..',
+  '.....PPPPPP.....',
+  '......PPPP......', // 교차점
+  '.....BBBBBB.....',
+  '......BBBB......',
 ]
 
 // 집혀서 공중에 뜬 상태 — 다리를 허둥대는 두 프레임
