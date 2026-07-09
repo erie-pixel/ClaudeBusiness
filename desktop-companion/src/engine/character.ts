@@ -11,9 +11,12 @@ export type StateName =
   | 'stay'
   | 'held' // 마우스로 집어든 상태 — 위치는 렌더러가 커서로 직접 제어
   | 'watch' // 활성 창 쳐다보기 (뒤돌아서 구경)
+  | 'climb' // 활성 창 위로 올라가 걸터앉기
+  | 'peek' // 활성 창 옆에서 빼꼼 구경하기
   | 'cowork' // 사용자가 일하는 동안 옆에서 같이 일하기
   | 'sit' // 소파에 앉아 쉬기 (홈 모드)
   | 'social' // 친구 캐릭터에게 다가가 인사 (멀티플레이)
+  | 'jot' // 사용자가 막 타이핑을 시작한 순간 반응해 잠깐 받아적는 흉내
 
 export interface Bounds {
   minX: number
@@ -182,6 +185,14 @@ export class Character {
   private watchTarget: { x: number; y: number } | null = null
   private watchTimer = 0
   private lastWindowPoint: { x: number; y: number } | null = null
+  private climbTarget: { x: number; y: number } | null = null
+  private climbTimer = 0
+  private climbArrived = false
+  private peekTarget: { x: number; y: number } | null = null
+  private peekTimer = 0
+  private peekFaceDir: 1 | -1 = 1
+  private peekArrived = false
+  private jotTimer = 0
   private workDesire = 0
   private coworkTarget: { x: number; y: number } | null = null
   private coworkTimer = 0
@@ -294,22 +305,67 @@ export class Character {
     }
   }
 
-  /** 활성 창이 바뀌었다는 알림 → 확률적으로 구경하러 감 (홈 모드에서는 안 감) */
-  notifyActiveWindow(point: { x: number; y: number }, homeMode = false) {
-    this.lastWindowPoint = point // Co-work 자리 선정에도 사용
+  /** 창 위에 걸터앉을 무작위 지점 (가장자리는 피해서 안정적으로 보이게) */
+  private pickClimbSpot(rect: { x: number; y: number; w: number; h: number }) {
+    const margin = Math.min(14, rect.w / 2)
+    const x = rect.x + margin + this.rng() * Math.max(0, rect.w - margin * 2)
+    return { x, y: rect.y }
+  }
+
+  /** 사용자가 막 타이핑을 시작한 순간(가만있다가→입력) 알림 → 한가하면 가끔 반응해서
+   * 잠깐 앉아 받아적는 흉내를 낸다. 이미 뭔가 하고 있으면 방해하지 않는다. */
+  notifyTypingStarted() {
+    if (this.state !== 'wander' && this.state !== 'idle') return
+    if (this.rng() < 0.35) {
+      this.state = 'jot'
+      this.jotTimer = 1.2 + this.rng() * 0.8
+      this.say('!')
+    }
+  }
+
+  /** 활성 창이 바뀌었다는 알림 → 확률적으로 구경/올라타기/빼꼼 중 하나 (홈 모드에서는 안 함) */
+  notifyActiveWindow(rect: { x: number; y: number; w: number; h: number }, homeMode = false) {
+    const topCenter = { x: rect.x + rect.w / 2, y: rect.y - 2 }
+    this.lastWindowPoint = topCenter // Co-work 자리 선정에도 사용
     if (homeMode) return
     if (this.state === 'watch') {
-      this.watchTarget = point // 이미 구경 중이면 새 창으로 관심 이동
+      this.watchTarget = topCenter // 이미 구경 중이면 새 창으로 관심 이동
+      return
+    }
+    if (this.state === 'climb') {
+      this.climbTarget = this.pickClimbSpot(rect)
+      return
+    }
+    if (this.state === 'peek') {
+      // 이미 빼꼼 중이면 같은 쪽에서 새 창 기준으로 자리만 갱신
+      const side: 1 | -1 = this.peekFaceDir === -1 ? 1 : -1
+      this.peekTarget = { x: rect.x + (side === 1 ? rect.w + 10 : -10), y: rect.y + Math.min(rect.h, 50) }
       return
     }
     if (this.state !== 'wander' && this.state !== 'idle') return
     if (this.rng() < this.cfg.watchChance) {
-      this.state = 'watch'
-      this.watchArrived = false
-      this.watchTarget = point
-      this.watchTimer =
+      const roll = this.rng()
+      const dur =
         this.cfg.watchTimeMin + this.rng() * (this.cfg.watchTimeMax - this.cfg.watchTimeMin)
-      if (this.rng() < 0.5) this.say('?')
+      if (roll < 0.5) {
+        this.state = 'watch'
+        this.watchArrived = false
+        this.watchTarget = topCenter
+        this.watchTimer = dur
+        if (this.rng() < 0.5) this.say('?')
+      } else if (roll < 0.75) {
+        this.state = 'climb'
+        this.climbArrived = false
+        this.climbTarget = this.pickClimbSpot(rect)
+        this.climbTimer = dur
+      } else {
+        const side: 1 | -1 = this.rng() < 0.5 ? 1 : -1 // 1=창 오른쪽 밖, -1=창 왼쪽 밖
+        this.peekTarget = { x: rect.x + (side === 1 ? rect.w + 10 : -10), y: rect.y + Math.min(rect.h, 50) }
+        this.peekFaceDir = side === 1 ? -1 : 1 // 창 쪽을 바라봄
+        this.peekArrived = false
+        this.state = 'peek'
+        this.peekTimer = dur
+      }
     }
   }
 
@@ -327,6 +383,12 @@ export class Character {
         return this.moving ? 'walk' : 'work'
       case 'watch':
         return this.moving ? 'walk' : this.watchArrived ? 'back' : 'idle'
+      case 'climb':
+        return this.moving ? 'walk' : 'sit' // 창 위에 걸터앉은 모습
+      case 'peek':
+        return this.moving ? 'walk' : 'idle' // 창 옆에서 빼꼼 — 몸을 기울여 구경
+      case 'jot':
+        return 'work' // 그 자리에 잠깐 앉아 받아적는 흉내
       case 'sit':
         return this.moving ? 'walk' : 'sit'
       case 'social':
@@ -364,6 +426,22 @@ export class Character {
         break
       case 'watch':
         this.updateWatch(dt, world)
+        this.regen(dt)
+        break
+      case 'climb':
+        this.updateClimb(dt, world)
+        this.regen(dt)
+        break
+      case 'peek':
+        this.updatePeek(dt, world)
+        this.regen(dt)
+        break
+      case 'jot':
+        this.jotTimer -= dt
+        if (this.jotTimer <= 0) {
+          this.state = 'idle'
+          this.pauseTimer = 1 + this.rng() * 2
+        }
         this.regen(dt)
         break
       case 'cowork':
@@ -640,6 +718,63 @@ export class Character {
       this.state = 'idle'
       this.pauseTimer = 2 + this.rng() * 4
       this.socialCooldown = 45 + this.rng() * 30
+    }
+  }
+
+  private updateClimb(dt: number, world: World) {
+    if (!this.climbTarget) {
+      this.state = 'idle'
+      this.pauseTimer = 1
+      return
+    }
+    const b = world.bounds
+    const tx = Math.max(b.minX, Math.min(b.maxX, this.climbTarget.x))
+    const ty = Math.max(b.minY, Math.min(b.maxY, this.climbTarget.y))
+    if (Math.hypot(tx - this.x, ty - this.y) > 3) {
+      this.moving = this.moveToward(tx, ty, this.cfg.walkSpeed, dt)
+      this.climbArrived = false
+      return
+    }
+    this.x = tx
+    this.y = ty
+    if (!this.climbArrived) {
+      this.climbArrived = true
+      this.say('!')
+    }
+    this.climbTimer -= dt
+    if (this.climbTimer <= 0) {
+      this.climbTarget = null
+      this.state = 'idle'
+      this.pauseTimer = 1 + this.rng() * 3
+    }
+  }
+
+  private updatePeek(dt: number, world: World) {
+    if (!this.peekTarget) {
+      this.state = 'idle'
+      this.pauseTimer = 1
+      return
+    }
+    const b = world.bounds
+    const tx = Math.max(b.minX, Math.min(b.maxX, this.peekTarget.x))
+    const ty = Math.max(b.minY, Math.min(b.maxY, this.peekTarget.y))
+    if (Math.hypot(tx - this.x, ty - this.y) > 3) {
+      this.moving = this.moveToward(tx, ty, this.cfg.walkSpeed, dt)
+      this.peekArrived = false
+      return
+    }
+    this.x = tx
+    this.y = ty
+    this.facing = this.peekFaceDir // 창 쪽을 향해 고정 (이동 방향과 무관하게)
+    if (!this.peekArrived) {
+      this.peekArrived = true
+      this.say('?')
+    }
+    this.peekTimer -= dt
+    if (this.peekTimer <= 0) {
+      this.peekTarget = null
+      this.state = 'idle'
+      this.pauseTimer = 1 + this.rng() * 3
     }
   }
 

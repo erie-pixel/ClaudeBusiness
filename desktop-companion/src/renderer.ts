@@ -313,8 +313,12 @@ let lastCursorMoveAt = 0
 let prevCursor: { x: number; y: number } | null = null
 let lastTypingAt = 0
 let watcherIdleSec = 0
+let wasTyping = false
 
 bridge.onUserInput((input) => {
+  // 타이핑이 막 시작된 순간(엣지)에만 반응 — 계속 치는 동안 매번 반응하지 않는다
+  if (input.typing && !wasTyping) char.notifyTypingStarted()
+  wasTyping = input.typing
   if (input.typing) lastTypingAt = performance.now()
   watcherIdleSec = input.idleSec
 })
@@ -403,8 +407,8 @@ bridge.onCursor((pos) => {
 
 bridge.onActiveWindow((rect) => {
   if (rect.w < 120 || rect.h < 80) return // 툴팁/팝업류 무시
-  // 창 상단 중앙, 발이 창 위 모서리에 살짝 걸치는 위치
-  char.notifyActiveWindow({ x: rect.x + rect.w / 2, y: rect.y - 2 }, sofa.enabled)
+  // 구경(창 위 중앙)/올라타기(창 위 임의 지점)/빼꼼(창 옆) 중 하나는 캐릭터가 rect로 직접 고른다
+  char.notifyActiveWindow(rect, sofa.enabled)
 })
 
 // ---------- 마우스 입력 (집기 / 소파 옮기기) ----------
