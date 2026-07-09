@@ -23,6 +23,7 @@ export interface NetCallbacks {
   onPeerJoin(peer: NetPeerInfo): void
   onPeerLeave(id: string): void
   onPeerState(id: string, state: NetState): void
+  onPeerRename(id: string, name: string): void
   onChat(id: string, name: string, text: string): void
   onEmote(id: string, sym: string): void
   /** 화면 엿보기 시그널 (요청/승인/거절/철회/시청 상태/WebRTC) */
@@ -91,6 +92,9 @@ export class NetClient {
           this.cb.onPeerState(id, { nx, ny, pose, facing })
           break
         }
+        case 'peer-rename':
+          this.cb.onPeerRename(msg.id as string, msg.name as string)
+          break
         case 'chat':
           this.cb.onChat(msg.id as string, msg.name as string, msg.text as string)
           break
@@ -139,6 +143,10 @@ export class NetClient {
 
   sendEmote(sym: string) {
     this.send({ t: 'emote', sym })
+  }
+
+  sendRename(name: string) {
+    this.send({ t: 'rename', name })
   }
 
   sendPeek(type: PeekSignalType, to: string, extra?: { watching?: boolean; payload?: unknown }) {

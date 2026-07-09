@@ -83,6 +83,13 @@ export function startRelay({ port = 8787 } = {}) {
           handleLeave(id)
           break
         }
+        case 'rename': {
+          const name = String(msg.name ?? '?').slice(0, 20)
+          if (!name || name === me.name) return
+          me.name = name
+          toPeers(id, { t: 'peer-rename', id, name })
+          break
+        }
         case 'state': {
           // 행동 intent — 정규화 좌표 + 포즈. 수신 측이 자기 화면에 맞게 재해석
           me.lastState = { nx: msg.nx, ny: msg.ny, pose: msg.pose, facing: msg.facing }

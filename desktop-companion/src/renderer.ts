@@ -207,6 +207,10 @@ const net = new NetClient({
   onPeerState(id, state: NetState) {
     peers.updateState(id, state)
   },
+  onPeerRename(id, name) {
+    peers.rename(id, name)
+    refreshMpPanel()
+  },
   onChat(id, name, text) {
     pushLog(name, text)
     showBubble(id, text)
@@ -791,6 +795,8 @@ function buildMp() {
   nameInput.maxLength = 20
   nameInput.value = playerName
   nameRow.appendChild(nameInput)
+  const nameSaveBtn = el('button', 'w-btn', '저장')
+  nameRow.appendChild(nameSaveBtn)
   mp.appendChild(nameRow)
 
   const svRow = el('div', 'w-row')
@@ -801,11 +807,25 @@ function buildMp() {
   svRow.appendChild(svInput)
   mp.appendChild(svRow)
 
+  // 이름은 방에 있는 동안에도 바꿀 수 있다 - 바뀌면 같은 방의 다른 사람에게도 바로 알린다.
   const saveMpLocal = () => {
-    playerName = nameInput.value.trim() || '친구'
+    const newName = nameInput.value.trim() || '친구'
+    const renamed = newName !== playerName
+    playerName = newName
     serverUrl = svInput.value.trim() || serverUrl
     bridge.saveMp({ playerName, serverUrl })
+    if (renamed && roomCode && net.connected) net.sendRename(playerName)
   }
+  nameSaveBtn.addEventListener('click', () => {
+    saveMpLocal()
+    refreshMpPanel()
+  })
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      saveMpLocal()
+      refreshMpPanel()
+    }
+  })
 
   if (!roomCode) {
     const btnRow = el('div', 'w-row')
@@ -1516,15 +1536,18 @@ function drawPeer(peer: Peer) {
     ctx.drawImage(frame.canvas, -W / 2, top, W, H)
   }
   ctx.restore()
-  // 이름표 (발 아래, 은은하게)
+  // 이름표 (발 아래). 보간된 peer.x/y는 소수점 좌표라 그대로 그리면 매 프레임
+  // 서브픽셀 위치가 흔들려 흐릿하게 보인다 - 정수 좌표로 스냅해서 크게 그린다.
   ctx.save()
-  ctx.font = '10px monospace'
+  ctx.font = 'bold 10px monospace'
   ctx.textAlign = 'center'
-  ctx.lineWidth = 3
-  ctx.strokeStyle = 'rgba(20,22,32,0.7)'
-  ctx.fillStyle = 'rgba(230,232,245,0.85)'
-  ctx.strokeText(peer.name, peer.x, peer.y + 12)
-  ctx.fillText(peer.name, peer.x, peer.y + 12)
+  ctx.lineWidth = 2
+  ctx.strokeStyle = '#22242f'
+  ctx.fillStyle = '#e8e9f5'
+  const nameX = Math.round(peer.x)
+  const nameY = Math.round(peer.y + 12)
+  ctx.strokeText(peer.name, nameX, nameY)
+  ctx.fillText(peer.name, nameX, nameY)
   ctx.restore()
 }
 

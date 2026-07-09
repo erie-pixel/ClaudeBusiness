@@ -55,6 +55,11 @@ export class PeerStore {
     this.peers.delete(id)
   }
 
+  rename(id: string, name: string) {
+    const peer = this.peers.get(id)
+    if (peer) peer.name = name
+  }
+
   updateState(id: string, state: NetState) {
     const peer = this.peers.get(id)
     if (peer) this.applyState(peer, state, !peer.hasState)
