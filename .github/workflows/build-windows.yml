@@ -74,6 +74,15 @@ jobs:
       - name: Build app bundles
         run: npm run build
 
+      - name: Compile macOS watcher helper (universal — 창 구경하기/같이 일하기/방치 감지)
+        run: |
+          mkdir -p build
+          swiftc -O -target arm64-apple-macosx11.0 native/mac-watcher.swift -o build/mac-watcher-arm64
+          swiftc -O -target x86_64-apple-macosx11.0 native/mac-watcher.swift -o build/mac-watcher-x64
+          lipo -create build/mac-watcher-arm64 build/mac-watcher-x64 -output build/mac-watcher
+          chmod +x build/mac-watcher
+          lipo -info build/mac-watcher
+
       - name: Build DMG (universal, unsigned)
         run: npx electron-builder --mac dmg --publish never
         env:

@@ -2,8 +2,8 @@
 //  1) 전면 창이 모니터 전체를 덮으면(전체화면 앱) 캐릭터를 숨긴다
 //  2) 활성 창 위치/크기를 렌더러에 알려 "창 쳐다보기" 행동을 발동시킨다
 // 네이티브 모듈 대신 상주 PowerShell 프로세스 하나로 Win32 API를 폴링한다
-// (설치 리스크 0, CPU ~0%). macOS는 setVisibleOnAllWorkspaces의
-// visibleOnFullScreen: false가 스페이스 차원에서 처리하므로 불필요.
+// (설치 리스크 0, CPU ~0%). macOS는 별도 구현(fullscreen-mac.ts) — 출력
+// 프로토콜은 이 파일과 동일하게 맞춰 렌더러/main.ts는 플랫폼을 구분하지 않는다.
 //
 // 제외 규칙:
 //  - Progman / WorkerW: 바탕화면 자체가 전면일 때 (항상 화면 전체 크기)
@@ -15,13 +15,9 @@
 //   idleSec: 마지막 입력(키/마우스) 이후 경과 초 (GetLastInputInfo)
 
 import { spawn, type ChildProcess } from 'node:child_process'
+import type { ForegroundInfo } from './watcher-types'
 
-export interface ForegroundInfo {
-  fullscreen: boolean
-  rect: { left: number; top: number; right: number; bottom: number } | null
-  typing: boolean
-  idleSec: number
-}
+export type { ForegroundInfo }
 
 let child: ChildProcess | null = null
 

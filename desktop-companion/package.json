@@ -60,7 +60,13 @@
       ],
       "icon": "build/icon-mac.png",
       "category": "public.app-category.utilities",
-      "identity": null
+      "identity": null,
+      "extraResources": [
+        {
+          "from": "build/mac-watcher",
+          "to": "mac-watcher"
+        }
+      ]
     },
     "dmg": {
       "sign": false

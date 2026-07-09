@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage, globalShortcut, session, desktopCapturer } from 'electron'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { startFullscreenWatcher, stopFullscreenWatcher } from './fullscreen-win'
+import { startFullscreenWatcher, stopFullscreenWatcher } from './fullscreen-watcher'
 import { loadSettings, saveSettings, type AppSettings } from './settings'
 import { startRelay, type RelayHandle } from '../server/relay.mjs'
 
