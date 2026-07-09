@@ -1,6 +1,13 @@
 @echo off
-rem Desktop Companion launcher v4 - double-click to install & run.
-rem On success the app launches DETACHED and this window closes by itself.
+rem Desktop Companion launcher v5 - double-click to install & run.
+rem On success the app is launched via WMI (Win32_Process.Create) instead of
+rem plain "start" - this makes its real parent process WmiPrvSE.exe (a Windows
+rem service), not this console. That matters because modern terminal hosts
+rem (Windows Terminal, VS Code, etc.) put everything they launch into one job
+rem object and kill the whole tree when the tab/window closes - "start" alone
+rem does NOT escape that, so the game used to die if you closed this window.
+rem With WMI launch it's always safe to close this window once you see the
+rem "Launched!" message, even if it doesn't close itself.
 rem If the character does not appear, run debug.bat instead - it keeps the
 rem window open and writes everything to run-log.txt.
 rem RULE: never use parentheses inside if/for blocks below, not even in echo text -
@@ -10,7 +17,7 @@ title Desktop Companion Launcher
 cd /d "%~dp0"
 
 set LOG=run-log.txt
-echo ==== Desktop Companion launcher v4 ==== > "%LOG%"
+echo ==== Desktop Companion launcher v5 ==== > "%LOG%"
 echo folder: %CD% >> "%LOG%"
 
 echo.
@@ -69,9 +76,17 @@ if errorlevel 1 (
   echo   Build failed - run debug.bat and send run-log.txt.
   goto :fail
 )
-echo step4: launching detached >> "%LOG%"
-start "" "node_modules\electron\dist\electron.exe" .
-echo   Launched! The character will appear in a moment - this window closes now.
+echo step4: launching via WMI so it survives this window closing >> "%LOG%"
+set PS1=%TEMP%\dc-launch-%RANDOM%.ps1
+echo $dir = '%CD%' > "%PS1%"
+echo $exe = Join-Path $dir 'node_modules\electron\dist\electron.exe' >> "%PS1%"
+echo $cmdline = '"' + $exe + '" "' + $dir + '"' >> "%PS1%"
+echo Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmdline; CurrentDirectory = $dir } >> "%PS1%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" >> "%LOG%" 2>&1
+del "%PS1%" >nul 2>nul
+echo   Launched! The character will appear in a moment.
+echo   This window is safe to close now, even if it does not close itself -
+echo   the game keeps running on its own.
 echo   Quit the app anytime: right-click the character, or tray heart icon.
 timeout /t 3 >nul
 exit /b 0
