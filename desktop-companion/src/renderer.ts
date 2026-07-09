@@ -1043,6 +1043,13 @@ const RTC_CONFIG: RTCConfiguration = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 }
 
+// 화면 엿보기는 전체 화면이 아니라 "내 캐릭터가 있는 위치 주변"만 잘라서 보낸다.
+// 원본 캡처(shareStream)는 로컬에만 머물고, WebRTC로는 잘라낸 작은 캔버스의
+// 스트림만 나간다 — 대역폭도 줄고 상대 화면 전체가 노출되지 않는다.
+const CROP_OUT_W = 320
+const CROP_OUT_H = 220
+const CROP_FRAC = 0.24 // 캐릭터를 중심으로 원본 화면의 이 비율(가로 기준)만큼만 잘라낸다
+
 const peeksWrap = document.getElementById('peeks') as HTMLDivElement
 const peekReq = document.getElementById('peekreq') as HTMLDivElement
 
@@ -1066,6 +1073,10 @@ interface ShareOut {
 }
 const shares = new Map<string, ShareOut>()
 let shareStream: MediaStream | null = null
+let shareVideo: HTMLVideoElement | null = null
+let cropCanvas: HTMLCanvasElement | null = null
+let cropCtx: CanvasRenderingContext2D | null = null
+let cropStream: MediaStream | null = null
 let peekAsk: { id: string; name: string } | null = null
 
 function requestPeek(peerId: string) {
@@ -1110,24 +1121,55 @@ function stopViewing(peerId: string) {
   cleanupPeekView(peerId)
 }
 
+/** 화면 캡처 + 크롭 캔버스를 (없으면) 준비하고 크롭된 스트림을 반환한다. 여러
+ * 시청자가 있어도 원본 캡처와 크롭 캔버스는 하나만 유지한다 — 다 같은 위치를 본다. */
+async function ensureCropStream(): Promise<MediaStream> {
+  if (cropStream) return cropStream
+  shareStream = await navigator.mediaDevices.getDisplayMedia({
+    video: { frameRate: 8 }, // 크롭 전이라 해상도를 제한하지 않는다 — 잘라낸 결과만 전송되므로 대역폭 걱정 없음
+    audio: false,
+  })
+  shareVideo = document.createElement('video')
+  shareVideo.autoplay = true
+  shareVideo.muted = true
+  shareVideo.srcObject = shareStream
+  await shareVideo.play().catch(() => undefined)
+  cropCanvas = document.createElement('canvas')
+  cropCanvas.width = CROP_OUT_W
+  cropCanvas.height = CROP_OUT_H
+  cropCtx = cropCanvas.getContext('2d')
+  cropStream = cropCanvas.captureStream(8)
+  return cropStream
+}
+
+/** 캐릭터의 화면상 위치(정규화)를 기준으로 원본 캡처에서 주변 영역만 크롭 캔버스에 그린다 */
+function updateShareCrop() {
+  if (!cropCtx || !shareVideo || !shareVideo.videoWidth || !canvas.width || !canvas.height) return
+  const vw = shareVideo.videoWidth
+  const vh = shareVideo.videoHeight
+  const normX = char.x / canvas.width
+  const normY = char.y / canvas.height
+  const cw = vw * CROP_FRAC
+  const ch = cw * (CROP_OUT_H / CROP_OUT_W)
+  const sx = Math.min(Math.max(0, normX * vw - cw / 2), Math.max(0, vw - cw))
+  const sy = Math.min(Math.max(0, normY * vh - ch / 2), Math.max(0, vh - ch))
+  cropCtx.drawImage(shareVideo, sx, sy, cw, ch, 0, 0, CROP_OUT_W, CROP_OUT_H)
+}
+
 async function grantPeek(viewerId: string, viewerName: string) {
+  let stream: MediaStream
   try {
-    if (!shareStream) {
-      shareStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 8, width: { max: 960 }, height: { max: 540 } },
-        audio: false,
-      })
-    }
+    stream = await ensureCropStream()
   } catch {
     net.sendPeek('peek-deny', viewerId)
     pushLog('알림', '화면 캡처를 시작하지 못했어요')
     return
   }
-  const base = shareStream.getVideoTracks()[0]
+  const base = stream.getVideoTracks()[0]
   const track = base.clone()
   track.enabled = false // 상대가 hover하기 전까지 송출 정지
   const pc = new RTCPeerConnection(RTC_CONFIG)
-  pc.addTrack(track, shareStream)
+  pc.addTrack(track, stream)
   pc.onicecandidate = (e) => {
     if (e.candidate) net.sendPeek('rtc', viewerId, { payload: { ice: e.candidate.toJSON() } })
   }
@@ -1145,9 +1187,15 @@ function closeShare(viewerId: string) {
   share.pc.close()
   share.track.stop()
   shares.delete(viewerId)
-  if (shares.size === 0 && shareStream) {
-    for (const t of shareStream.getTracks()) t.stop()
+  if (shares.size === 0) {
+    if (cropStream) for (const t of cropStream.getTracks()) t.stop()
+    if (shareStream) for (const t of shareStream.getTracks()) t.stop()
+    cropStream = null
     shareStream = null
+    if (shareVideo) shareVideo.srcObject = null
+    shareVideo = null
+    cropCanvas = null
+    cropCtx = null
   }
 }
 
@@ -1172,7 +1220,11 @@ function showPeekAsk(id: string, name: string) {
   peekReq.appendChild(el('div', 'w-title', '화면 보기 요청'))
   peekReq.appendChild(el('div', 'w-note', `${name} 님이 내 화면을 보고 싶어해요.`))
   peekReq.appendChild(
-    el('div', 'w-note', '허용하면 상대가 내 캐릭터에 마우스를 올린 동안 화면 전체가 낮은 화질로 보여요. 공유 중에는 캐릭터에 ● 표시가 뜨고, 언제든 중지할 수 있어요.'),
+    el(
+      'div',
+      'w-note',
+      '허용하면 상대가 내 캐릭터에 마우스를 올린 동안 내 캐릭터 주변 화면 일부만 보여요 (화면 전체가 아니에요). 공유 중에는 캐릭터에 ● 표시가 뜨고, 언제든 중지할 수 있어요.',
+    ),
   )
   const row = el('div', 'w-row')
   const allow = el('button', 'w-btn', '허용')
@@ -1597,6 +1649,7 @@ function loop(now: number) {
     if (chatOpen) positionChat()
     updatePeekFrames()
   }
+  if (shares.size > 0) updateShareCrop()
   updateBubbles(dt)
 
   // 따라다니거나 집혀 있는 동안만 커서 폴링을 고빈도로 (CPU 예산)
