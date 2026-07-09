@@ -394,6 +394,32 @@ describe('친구에게 인사 (social)', () => {
     char.notifyPeerNearby({ x: 200, y: CY })
     expect(char.state).toBe('follow')
   })
+
+  it('친구가 인사 기호를 보내면 한가할 때 확률에 상관없이 다가가 화답한다', () => {
+    // rng 0.9 → notifyPeerNearby의 40% 확률이라면 발동 안 했을 값이지만
+    // notifyGreeted는 확률 게이트가 없어 그대로 발동해야 한다
+    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.9)
+    char.state = 'idle'
+    char.notifyGreeted({ x: 200, y: CY })
+    expect(char.state).toBe('social')
+    simulate(char, makeWorld(), 5)
+    expect(char.x).toBeGreaterThan(0) // 목표 쪽으로 다가갔다
+  })
+
+  it('따라오기 등 사용자 명령 중에는 화답하러 가지 않는다', () => {
+    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.1)
+    char.commandFollow()
+    char.notifyGreeted({ x: 200, y: CY })
+    expect(char.state).toBe('follow')
+  })
+
+  it('인사에 화답하러 가서 도착하면 두 박자로(!, ♪ 순서 상관없이) 인사를 주고받는다', () => {
+    const char = new Character(190, CY, DEFAULT_CONFIG, () => 0.1)
+    char.state = 'idle'
+    char.notifyGreeted({ x: 200, y: CY }) // 10px 거리 → 금방 도착
+    simulate(char, makeWorld(), 1)
+    expect(char.messages).toEqual(expect.arrayContaining(['!', '♪']))
+  })
 })
 
 describe('창 쳐다보기 (watch)', () => {

@@ -305,6 +305,21 @@ export class Character {
     }
   }
 
+  /** 근처 친구가 인사 기호(!/♪)를 보내는 걸 감지했다는 알림 → 한가하면 거의 항상
+   * 다가가서 화답한다. 순전히 랜덤으로 서로 지나치기만 하던 것과 달리, 한쪽이
+   * 인사하면 상대가 반응해 주고받는 대화하는 느낌을 만든다. */
+  notifyGreeted(point: { x: number; y: number }) {
+    if (this.state === 'social') {
+      this.socialTarget = point
+      return
+    }
+    if (this.state !== 'wander' && this.state !== 'idle') return
+    this.state = 'social'
+    this.socialTarget = point
+    this.socialTimer = 4 + this.rng() * 5
+    this.socialGreeted = false
+  }
+
   /** 창 위에 걸터앉을 무작위 지점 (가장자리는 피해서 안정적으로 보이게) */
   private pickClimbSpot(rect: { x: number; y: number; w: number; h: number }) {
     const margin = Math.min(14, rect.w / 2)
@@ -709,7 +724,10 @@ export class Character {
     if (Math.abs(tx - this.x) > 1) this.facing = tx > this.x ? 1 : -1
     if (!this.socialGreeted) {
       this.socialGreeted = true
-      this.say(this.rng() < 0.5 ? '♪' : '!')
+      // 두 박자로 짧게 — 인사 하나만 툭 던지고 끝나기보다 주고받는 느낌
+      const first = this.rng() < 0.5 ? '♪' : '!'
+      this.say(first)
+      this.say(first === '!' ? '♪' : '!')
       this.emoteTimer = 1.6 // 하트도 살짝
     }
     this.socialTimer -= dt

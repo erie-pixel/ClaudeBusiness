@@ -178,6 +178,9 @@ const NET_ERRORS: Record<string, string> = {
   'already-in': '이미 그 방에 있어요',
 }
 
+/** 인사로 취급하는 기호 — 근처 친구가 이걸 보내면 다가가서 화답한다 */
+const GREETING_SYMS: ReadonlySet<string> = new Set(['!', '♪'])
+
 const net = new NetClient({
   onJoined(room, _self, infos) {
     roomCode = room
@@ -217,6 +220,14 @@ const net = new NetClient({
   },
   onEmote(id, sym) {
     peerEmotes.set(id, { text: sym, timer: 1.8 })
+    // 근처 친구가 인사 기호를 보내면 감지해서 화답하러 간다 (대화하듯 주고받기)
+    if (GREETING_SYMS.has(sym)) {
+      const peer = peers.peers.get(id)
+      if (peer && peer.hasState) {
+        const dist = Math.hypot(peer.x - char.x, peer.y - char.y)
+        if (dist <= 420) char.notifyGreeted({ x: peer.x - 26 * char.facing, y: peer.y })
+      }
+    }
   },
   onPeek(type, from, name, watching, payload) {
     handlePeekSignal(type, from, name, watching, payload)
