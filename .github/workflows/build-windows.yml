@@ -1,0 +1,64 @@
+# Windows 설치 파일 빌드 — push마다 자동 실행, Releases에 업로드
+# 결과물: https://github.com/erie-pixel/ClaudeBusiness/releases 에서 다운로드
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/desktop-companion-game-012c1u']
+    paths:
+      - 'desktop-companion/**'
+      - '.github/workflows/build-windows.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-windows
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop-companion
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop-companion/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build app bundles
+        run: npm run build
+
+      - name: Build NSIS installer
+        run: npx electron-builder --win nsis --publish never
+
+      - name: Upload artifact (Actions 탭에서도 다운로드 가능)
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-companion-setup
+          path: desktop-companion/release/*.exe
+          if-no-files-found: error
+
+      - name: Publish release (공유용 다운로드 링크)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-build-${{ github.run_number }}
+          name: 바탕화면 키우기 개발 빌드 ${{ github.run_number }}
+          prerelease: true
+          body: |
+            Windows 설치 파일 (개발 빌드, 코드 서명 없음).
+            아래 .exe를 받아 실행 — SmartScreen 경고가 뜨면 "추가 정보 → 실행".
+            커밋: ${{ github.sha }}
+          files: desktop-companion/release/*.exe
