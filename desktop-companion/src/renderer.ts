@@ -1406,10 +1406,16 @@ function currentFrame(): BakedFrame {
       return frames.sleep
     case 'pant':
       return frames.pant
-    case 'walk':
-      return Math.floor(animTime * 6) % 2 === 0 ? frames.walkA : frames.walkB
-    case 'run':
-      return Math.floor(animTime * 12) % 2 === 0 ? frames.walkA : frames.walkB
+    case 'walk': {
+      // 디딤 → 지나감 → 디딤(반대) → 지나감: 상하 바운스 + 팔 스윙이 있는 4프레임 보행
+      const seq: FrameName[] = ['walkA', 'walkMid', 'walkB', 'walkMid']
+      return frames[seq[Math.floor(animTime * 9) % 4]]
+    }
+    case 'run': {
+      // 디딤 → 공중 → 디딤(반대) → 공중: 전용 달리기 사이클 (전경 자세)
+      const seq: FrameName[] = ['runA', 'runMid', 'runB', 'runMid']
+      return frames[seq[Math.floor(animTime * 14) % 4]]
+    }
     default:
       return blinkTimer < 0.15 ? frames.blink : frames.idle
   }
@@ -1430,10 +1436,14 @@ function frameForPeer(peer: Peer): BakedFrame {
       return baked.sleep
     case 'pant':
       return baked.pant
-    case 'walk':
-      return Math.floor(animTime * 6) % 2 === 0 ? baked.walkA : baked.walkB
-    case 'run':
-      return Math.floor(animTime * 12) % 2 === 0 ? baked.walkA : baked.walkB
+    case 'walk': {
+      const seq: FrameName[] = ['walkA', 'walkMid', 'walkB', 'walkMid']
+      return baked[seq[Math.floor(animTime * 9) % 4]]
+    }
+    case 'run': {
+      const seq: FrameName[] = ['runA', 'runMid', 'runB', 'runMid']
+      return baked[seq[Math.floor(animTime * 14) % 4]]
+    }
     default:
       return baked.idle
   }

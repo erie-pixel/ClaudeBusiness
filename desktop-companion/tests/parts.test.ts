@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { composeMap, DEFAULT_LOOK, SPRITE_H, SPRITE_W } from '../src/engine/sprite'
+import { ALL_FRAME_NAMES, composeMap, DEFAULT_LOOK, SPRITE_H, SPRITE_W } from '../src/engine/sprite'
 import { BUILTIN_PACK, getPart, partsBySlot } from '../src/engine/parts'
 
 const has = (rows: string[], ch: string) => rows.some((r) => r.includes(ch))
@@ -49,6 +49,42 @@ describe('파츠 합성 (composeMap)', () => {
     const rows = composeMap('idle', { ...DEFAULT_LOOK, hairStyle: 'no-such-mod-part' })
     expect(has(rows, 'K')).toBe(true) // 폴백 머리가 합성됨
     expect(getPart('hair', 'no-such-mod-part').id).toBe(partsBySlot('hair')[0].id)
+  })
+})
+
+describe('애니메이션 프레임 규격', () => {
+  it('모든 프레임이 정확히 24행 16폭이다', () => {
+    for (const name of ALL_FRAME_NAMES) {
+      const rows = composeMap(name, DEFAULT_LOOK)
+      expect(rows, name).toHaveLength(SPRITE_H)
+      for (const r of rows) expect(r.length, name).toBe(SPRITE_W)
+    }
+  })
+
+  it('서기/걷기 디딤 프레임은 발이 바닥(마지막 행)에 닿아 있다', () => {
+    for (const name of ['idle', 'walkA', 'walkB', 'runA', 'runB'] as const) {
+      const rows = composeMap(name, DEFAULT_LOOK)
+      expect(rows[SPRITE_H - 1].includes('B'), name).toBe(true)
+    }
+  })
+
+  it('달리기 공중 프레임은 발이 바닥에서 떠 있다', () => {
+    const rows = composeMap('runMid', DEFAULT_LOOK)
+    expect(rows[SPRITE_H - 1].includes('B')).toBe(false)
+    expect(rows[SPRITE_H - 2].includes('B')).toBe(false)
+  })
+
+  it('서 있을 때 다리가 걷기 지나감 프레임보다 1비트 짧다 (몸이 1px 낮음)', () => {
+    const idle = composeMap('idle', DEFAULT_LOOK)
+    const pass = composeMap('walkMid', DEFAULT_LOOK)
+    // idle은 맨 윗줄이 투명하고(몸 전체가 1px 아래), walkMid는 머리가 맨 위부터
+    expect(/[^.]/.test(idle[0])).toBe(false)
+    expect(pass[1].includes('K')).toBe(true)
+  })
+
+  it('달리기 프레임은 걷기와 다른 전용 실루엣이다', () => {
+    expect(composeMap('runA', DEFAULT_LOOK)).not.toEqual(composeMap('walkA', DEFAULT_LOOK))
+    expect(composeMap('runMid', DEFAULT_LOOK)).not.toEqual(composeMap('walkMid', DEFAULT_LOOK))
   })
 })
 

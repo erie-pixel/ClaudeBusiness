@@ -103,9 +103,9 @@ const BASE_BODY = [
   '....TTTTTTTT....',
 ]
 
-const LEGS_IDLE = [
+// 서 있을 때 — 다리를 한 비트 짧게 (프레임 조립 시 몸통이 1px 내려와 발은 바닥 유지)
+const LEGS_STAND = [
   '....PPPPPPPP....',
-  '....PPP..PPP....',
   '....PPP..PPP....',
   '....PPP..PPP....',
   '....PPP..PPP....',
@@ -113,17 +113,47 @@ const LEGS_IDLE = [
   '...BBBB..BBBB...',
 ]
 
-const LEGS_WALK_A = [
+// 걷기 디딤 (양발 벌림, 몸 1px 낮음 — 사이클에 상하 바운스가 생긴다)
+const LEGS_WALK_CONTACT = [
   '....PPPPPPPP....',
   '...PPP...PPP....',
-  '...PPP....PPP...',
   '..PPP.....PPP...',
   '..PPP......PPP..',
   '.BBBB......BBBB.',
-  '................',
+  '.BBBB......BBBB.',
+]
+const LEGS_WALK_CONTACT_R = LEGS_WALK_CONTACT.map((row) => row.split('').reverse().join(''))
+
+// 걷기 지나감 (다리 모임, 뒷발 들림 — 몸이 반 박자 위로)
+const LEGS_WALK_PASS = [
+  '....PPPPPPPP....',
+  '....PPPPPPP.....',
+  '....PPP.PPP.....',
+  '....PPP..PPP....',
+  '....PPP..PPP....',
+  '...BBBB..BBB....',
+  '...BBBB.........',
 ]
 
-const LEGS_WALK_B = LEGS_WALK_A.map((row) => row.split('').reverse().join(''))
+// 달리기 디딤 (큰 보폭, 뒷발 차기)
+const LEGS_RUN_CONTACT = [
+  '....PPPPPPPP....',
+  '..PPPP....PPP...',
+  '.PPP........PPP.',
+  '.PPP........PPP.',
+  'BBBB........BBBB',
+  'BBBB............',
+]
+const LEGS_RUN_CONTACT_R = LEGS_RUN_CONTACT.map((row) => row.split('').reverse().join(''))
+
+// 달리기 공중 (양다리 접힘, 발이 바닥에서 2px 떠 있음)
+const LEGS_RUN_TUCK = [
+  '....PPPPPPPP....',
+  '...PPPP..PPPP...',
+  '..PPPP....PPPP..',
+  '..BBB......BBB..',
+  '..BBB......BBB..',
+]
 
 // 집혀서 공중에 뜬 상태 — 다리를 허둥대는 두 프레임
 const LEGS_FLAIL_A = [
@@ -205,8 +235,12 @@ export const SOFA = [
 export type FrameName =
   | 'idle'
   | 'blink'
-  | 'walkA'
-  | 'walkB'
+  | 'walkA' // 디딤 (왼발 앞)
+  | 'walkMid' // 지나감 (다리 모임, 반 박자 위로)
+  | 'walkB' // 디딤 (오른발 앞)
+  | 'runA' // 디딤 (큰 보폭, 전경 자세)
+  | 'runMid' // 공중 (다리 접힘)
+  | 'runB'
   | 'sleep'
   | 'pant'
   | 'heldA'
@@ -216,19 +250,63 @@ export type FrameName =
   | 'back'
   | 'sit'
 
-const FRAME_LEGS: Record<FrameName, string[]> = {
-  idle: LEGS_IDLE,
-  blink: LEGS_IDLE,
-  walkA: LEGS_WALK_A,
-  walkB: LEGS_WALK_B,
-  sleep: LEGS_IDLE,
-  pant: LEGS_IDLE,
-  heldA: LEGS_FLAIL_A,
-  heldB: LEGS_FLAIL_B,
-  workA: LEGS_WORK_A,
-  workB: LEGS_WORK_B,
-  back: LEGS_IDLE,
-  sit: LEGS_SIT,
+const PAD = '................'
+
+/** 팔 자세 — 걷기/달리기에서 팔이 함께 움직인다 */
+type ArmPose = 'neutral' | 'swingA' | 'swingB' | 'pump'
+
+interface FrameDef {
+  back?: boolean
+  arms?: ArmPose
+  /** 달리기 전경(앞으로 기울기) — 머리 행을 진행 방향으로 1px 밀기 */
+  lean?: boolean
+  /** 몸통 블록 위에 넣을 빈 줄 수 (디딤 프레임 = 1, 몸이 낮아짐) */
+  padTop?: number
+  legs: string[]
+  /** 다리 아래 빈 줄 수 (공중 프레임) */
+  padBottom?: number
+}
+
+const FRAME_DEFS: Record<FrameName, FrameDef> = {
+  idle: { padTop: 1, legs: LEGS_STAND },
+  blink: { padTop: 1, legs: LEGS_STAND },
+  walkA: { padTop: 1, arms: 'swingA', legs: LEGS_WALK_CONTACT },
+  walkMid: { legs: LEGS_WALK_PASS },
+  walkB: { padTop: 1, arms: 'swingB', legs: LEGS_WALK_CONTACT_R },
+  runA: { padTop: 1, arms: 'pump', lean: true, legs: LEGS_RUN_CONTACT },
+  runMid: { arms: 'pump', lean: true, legs: LEGS_RUN_TUCK, padBottom: 2 },
+  runB: { padTop: 1, arms: 'pump', lean: true, legs: LEGS_RUN_CONTACT_R },
+  sleep: { padTop: 1, legs: LEGS_STAND },
+  pant: { padTop: 1, legs: LEGS_STAND },
+  heldA: { legs: LEGS_FLAIL_A },
+  heldB: { legs: LEGS_FLAIL_B },
+  workA: { legs: LEGS_WORK_A },
+  workB: { legs: LEGS_WORK_B },
+  back: { back: true, padTop: 1, legs: LEGS_STAND },
+  sit: { legs: LEGS_SIT },
+}
+
+/** 팔 스윙 — 몸통 블록(17행)의 어깨/팔 픽셀을 이동 */
+function applyArms(rows: string[][], pose: ArmPose) {
+  const set = (y: number, x: number, ch: string) => {
+    if (rows[y] && rows[y][x] !== undefined) rows[y][x] = ch
+  }
+  if (pose === 'swingA') {
+    set(12, 2, 'S') // 왼팔 앞/위로
+    set(14, 2, '.')
+    set(13, 13, '.') // 오른팔 뒤/아래로
+    set(15, 13, 'S')
+  } else if (pose === 'swingB') {
+    set(12, 13, 'S')
+    set(14, 13, '.')
+    set(13, 2, '.')
+    set(15, 2, 'S')
+  } else if (pose === 'pump') {
+    set(12, 2, 'S') // 양팔 접어 올림 (달리기)
+    set(12, 13, 'S')
+    set(14, 2, '.')
+    set(14, 13, '.')
+  }
 }
 
 /** 눈을 감고 있는 프레임들 (눈 파츠의 E를 L로 치환) */
@@ -247,26 +325,44 @@ function overlay(rows: string[][], part: PartMap) {
 
 /**
  * 프레임 합성 (순수 함수 — 캔버스 없이 문자 그리드 반환, 테스트 대상).
- * 순서: 베이스+다리 → 상의 → 머리 → (앞면이면) 눈 → 입
+ * 1) 몸통 블록(17행)에 파츠(상의→머리→눈→입)와 팔 자세를 합성
+ * 2) 프레임 정의에 따라 [윗 패딩 + 몸통 + 다리 + 아랫 패딩]으로 조립
+ *    — 디딤 프레임은 몸이 1px 낮고, 공중 프레임은 발이 바닥에서 뜬다
  */
 export function composeMap(frame: FrameName, look: Look = DEFAULT_LOOK): string[] {
-  const isBack = frame === 'back'
-  const rows: string[][] = [...BASE_BODY, ...FRAME_LEGS[frame]].map((r) =>
-    r.padEnd(SPRITE_W, '.').split(''),
-  )
+  const def = FRAME_DEFS[frame]
+  const isBack = def.back === true
+
+  // 뒷모습도 같은 민머리 베이스 — 얼굴 파츠를 생략하고 파츠의 back 맵이 덮는다
+  const body: string[][] = BASE_BODY.map((r) => r.padEnd(SPRITE_W, '.').split(''))
+  if (def.arms && !isBack) applyArms(body, def.arms)
 
   const top = getPart('top', look.topStyle)
-  overlay(rows, isBack ? (top.back ?? top.map) : top.map)
+  overlay(body, isBack ? (top.back ?? top.map) : top.map)
 
   const hair = getPart('hair', look.hairStyle)
-  overlay(rows, isBack ? (hair.back ?? hair.map) : hair.map)
+  overlay(body, isBack ? (hair.back ?? hair.map) : hair.map)
 
   if (!isBack) {
-    overlay(rows, getPart('eyes', look.eyesStyle).map)
-    overlay(rows, getPart('mouth', look.mouthStyle).map)
+    overlay(body, getPart('eyes', look.eyesStyle).map)
+    overlay(body, getPart('mouth', look.mouthStyle).map)
   }
 
-  let out = rows.map((r) => r.join(''))
+  // 전경 자세: 머리 행(0~10)을 진행 방향으로 1px 밀기 (좌우 반전은 렌더러가 처리)
+  if (def.lean) {
+    for (let y = 0; y <= 10; y++) {
+      body[y] = ['.', ...body[y].slice(0, SPRITE_W - 1)]
+    }
+  }
+
+  const rows: string[] = []
+  for (let i = 0; i < (def.padTop ?? 0); i++) rows.push(PAD)
+  for (const r of body) rows.push(r.join(''))
+  for (const r of def.legs) rows.push(r.padEnd(SPRITE_W, '.'))
+  for (let i = 0; i < (def.padBottom ?? 0); i++) rows.push(PAD)
+
+  let out = rows.slice(0, SPRITE_H)
+  while (out.length < SPRITE_H) out.push(PAD)
   if (CLOSED_EYE_FRAMES.has(frame)) out = out.map((r) => r.replace(/E/g, 'L'))
   return out
 }
@@ -283,9 +379,11 @@ export function bakeFrame(name: FrameName, look: Look = DEFAULT_LOOK): BakedFram
 
 export function bakeAllFrames(look: Look): Record<FrameName, BakedFrame> {
   const out = {} as Record<FrameName, BakedFrame>
-  for (const name of Object.keys(FRAME_LEGS) as FrameName[]) out[name] = bakeFrame(name, look)
+  for (const name of Object.keys(FRAME_DEFS) as FrameName[]) out[name] = bakeFrame(name, look)
   return out
 }
+
+export const ALL_FRAME_NAMES = Object.keys(FRAME_DEFS) as FrameName[]
 
 export function bakeMap(
   rows: string[],
