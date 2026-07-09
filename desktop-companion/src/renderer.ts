@@ -1557,7 +1557,11 @@ let last = performance.now()
 let lastPollActive = false
 
 function loop(now: number) {
-  const dt = Math.min((now - last) / 1000, 0.1)
+  // now가 이전 last보다 작게 들어오는 경우가 실제로 있다(첫 rAF 프레임의
+  // 타임스탬프가 performance.now()보다 앞서는 브라우저/Electron 타이밍 케이스).
+  // dt가 음수면 animTime이 음수가 되고, walk/run 프레임 인덱스(음수 % 4)가
+  // 배열 밖(-1 등)을 가리켜 frames[undefined] → 렌더러 크래시로 이어진다.
+  const dt = Math.max(0, Math.min((now - last) / 1000, 0.1))
   last = now
   animTime += dt
   blinkTimer -= dt
