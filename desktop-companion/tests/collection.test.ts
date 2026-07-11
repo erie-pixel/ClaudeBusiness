@@ -88,7 +88,7 @@ describe('앨범 직렬화/정규화', () => {
   it('저장 → 로드 왕복이 내용을 보존한다', () => {
     const album = emptyAlbum(NOW)
     rollFind(album, () => 0, NOW)
-    album.journal.feeds = 3
+    album.journal.greets = 3
     album.journal.totalSec = 1234
     const restored = normalizeAlbum(JSON.parse(JSON.stringify(album)), NOW + 999)
     expect(restored).toEqual(album)

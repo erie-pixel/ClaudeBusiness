@@ -67,9 +67,6 @@ export interface CharacterConfig {
   wanderPauseMin: number
   wanderPauseMax: number
   // ---- 스탯 (0~100) ----
-  hungerRate: number // 배고픔 증가 /s
-  hungerFeedRelief: number // 간식 1회당 감소량
-  hungryAt: number // 이 이상이면 배고픔 호소
   sleepinessRateDay: number // 졸림 증가 /s (낮)
   sleepinessRateNight: number // 졸림 증가 /s (밤 22~06시)
   sleepinessNapRelief: number // 낮잠 중 감소 /s
@@ -100,9 +97,6 @@ export const DEFAULT_CONFIG: CharacterConfig = {
   exhaustedRecoverAt: 35,
   wanderPauseMin: 18,
   wanderPauseMax: 45,
-  hungerRate: 100 / (3.5 * 3600), // ~3.5시간에 만배고픔
-  hungerFeedRelief: 70,
-  hungryAt: 80,
   sleepinessRateDay: 100 / (5 * 3600),
   sleepinessRateNight: 100 / (2 * 3600),
   sleepinessNapRelief: 0.9,
@@ -166,7 +160,7 @@ export class Character {
   state: StateName = 'wander'
   running = false
   moving = false
-  /** 하트 이모트 잔여 시간 (쓰다듬기/간식) */
+  /** 하트 이모트 잔여 시간 (인사/응원 등 호감 표현) */
   emoteTimer = 0
   /** 이모트 심볼 큐 (!, ?, ♪ 등) — 렌더러가 shift()로 꺼내 머리 위에 표시 */
   messages: string[] = []
@@ -177,18 +171,16 @@ export class Character {
    * 'cheered': 일하는 사용자를 응원하러 옴 */
   events: string[] = []
 
-  // 스탯 (0~100)
+  // 내부 스탯 (0~100) — UI에 노출하지 않고 행동 다양성의 연료로만 쓴다
+  // (SNS/동료 컨셉: 관리해야 하는 육성 게이지가 아니라 캐릭터의 생활 리듬)
   stamina: number
-  hunger = 20
   sleepiness = 20
-  mood = 70
 
   private cfg: CharacterConfig
   private rng: () => number
   private getHour: () => number
   private wanderTarget: { x: number; y: number } | null = null
   private pauseTimer = 0
-  private hungrySayCooldown = 0
   private watchTarget: { x: number; y: number } | null = null
   private watchTimer = 0
   private lastWindowPoint: { x: number; y: number } | null = null
@@ -262,23 +254,12 @@ export class Character {
   commandStay() {
     this.state = 'stay'
   }
-  /** 간식 주기 */
-  feed() {
-    this.hunger = Math.max(0, this.hunger - this.cfg.hungerFeedRelief)
-    this.mood = Math.min(100, this.mood + 10)
-    this.emoteTimer = 1.6
-    this.say('♪')
-    if (this.state === 'nap') this.state = 'idle' // 간식 냄새에 깬다
-  }
-  /** 좌클릭: 자면 깨우고, 깨어 있으면 쓰다듬기 */
+  /** 좌클릭: 낮잠 중이면 깨운다 (펫 육성 요소가 아닌 동료 컨셉 — 쓰다듬기/간식 없음) */
   poke() {
     if (this.state === 'held') return
     if (this.state === 'nap') {
       this.state = 'idle'
       this.pauseTimer = 1
-    } else {
-      this.emoteTimer = 1.6
-      this.mood = Math.min(100, this.mood + 4)
     }
   }
 
@@ -579,7 +560,6 @@ export class Character {
   }
 
   private updateStats(dt: number) {
-    this.hunger = Math.min(100, this.hunger + this.cfg.hungerRate * dt)
     const hour = this.getHour()
     const night = hour >= 22 || hour < 6
     if (this.state === 'nap') {
@@ -589,15 +569,6 @@ export class Character {
         100,
         this.sleepiness + (night ? this.cfg.sleepinessRateNight : this.cfg.sleepinessRateDay) * dt,
       )
-    }
-    // 배고픔이 심하면 기분이 서서히 나빠진다
-    if (this.hunger >= this.cfg.hungryAt) {
-      this.mood = Math.max(0, this.mood - 0.02 * dt * 60)
-      this.hungrySayCooldown -= dt
-      if (this.hungrySayCooldown <= 0 && this.state !== 'nap' && this.state !== 'held') {
-        this.say('~?')
-        this.hungrySayCooldown = 45
-      }
     }
   }
 

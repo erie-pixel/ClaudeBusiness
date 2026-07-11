@@ -175,8 +175,6 @@ export interface Journal {
   firstRunAt: number
   /** 함께 보낸 누적 시간 (초) */
   totalSec: number
-  feeds: number
-  pets: number
   coworkSessions: number
   greets: number
   /** 할일 목록에서 완료 처리한 횟수 */
@@ -195,7 +193,7 @@ export interface AlbumData {
 
 export function emptyAlbum(now: number): AlbumData {
   return {
-    journal: { firstRunAt: now, totalSec: 0, feeds: 0, pets: 0, coworkSessions: 0, greets: 0, todosDone: 0 },
+    journal: { firstRunAt: now, totalSec: 0, coworkSessions: 0, greets: 0, todosDone: 0 },
     found: {},
   }
 }
@@ -210,8 +208,6 @@ export function normalizeAlbum(raw: unknown, now: number): AlbumData {
   const journal: Journal = {
     firstRunAt: num((j as Journal).firstRunAt, now) || now,
     totalSec: num((j as Journal).totalSec, 0),
-    feeds: num((j as Journal).feeds, 0),
-    pets: num((j as Journal).pets, 0),
     coworkSessions: num((j as Journal).coworkSessions, 0),
     greets: num((j as Journal).greets, 0),
     todosDone: num((j as Journal).todosDone, 0),

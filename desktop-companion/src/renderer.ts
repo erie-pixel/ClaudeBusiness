@@ -521,38 +521,12 @@ window.addEventListener('mouseup', () => {
 
 const menu = document.getElementById('menu') as HTMLDivElement
 
-function statRow(label: string, value: number, color: string): HTMLDivElement {
-  const row = document.createElement('div')
-  row.className = 'stat'
-  const name = document.createElement('span')
-  name.textContent = label
-  const bar = document.createElement('div')
-  bar.className = 'bar'
-  const fill = document.createElement('div')
-  fill.className = 'fill'
-  fill.style.width = `${Math.round(value)}%`
-  fill.style.background = color
-  bar.appendChild(fill)
-  row.appendChild(name)
-  row.appendChild(bar)
-  return row
-}
-
 function buildMenu() {
   const following = char.state === 'follow' || char.state === 'exhausted'
   menu.innerHTML = ''
 
-  const stats = document.createElement('div')
-  stats.className = 'stats'
-  stats.appendChild(statRow('기운', char.stamina, '#7ec46a'))
-  stats.appendChild(statRow('허기', char.hunger, '#e0913f'))
-  stats.appendChild(statRow('졸림', char.sleepiness, '#8f7fd4'))
-  stats.appendChild(statRow('기분', char.mood, '#e85d75'))
-  menu.appendChild(stats)
-  const hr0 = document.createElement('div')
-  hr0.className = 'sep'
-  menu.appendChild(hr0)
-
+  // 스탯 게이지 없음 — 관리해야 하는 육성 게이지가 아니라
+  // 함께 지내는 동료라는 컨셉 (스탯은 내부 행동 리듬으로만 존재)
   const items: Array<{ label: string; action: () => void } | 'sep'> = [
     following
       ? { label: '그만 따라와', action: () => char.commandStopFollow() }
@@ -561,23 +535,6 @@ function buildMenu() {
       ? { label: '일어나', action: () => char.poke() }
       : { label: '낮잠 자', action: () => char.commandNap() },
     { label: '여기서 기다려', action: () => char.commandStay() },
-    'sep',
-    {
-      label: '간식 주기',
-      action: () => {
-        char.feed()
-        album.journal.feeds++
-        saveAlbumNow()
-      },
-    },
-    {
-      label: '쓰다듬기',
-      action: () => {
-        char.poke()
-        album.journal.pets++
-        saveAlbumNow()
-      },
-    },
     'sep',
     ...(focus
       ? [
@@ -750,12 +707,7 @@ window.addEventListener('click', (e) => {
     return
   }
   if (overCharacter(e.clientX, e.clientY)) {
-    if (char.state !== 'nap') {
-      // 낮잠 깨우기는 쓰다듬기로 세지 않는다
-      album.journal.pets++
-      saveAlbumNow()
-    }
-    char.poke()
+    char.poke() // 낮잠 중이면 깨우기만 — 쓰다듬기 상호작용은 없다 (동료 컨셉)
     return
   }
   // 친구 캐릭터 클릭 → 대화 기록
@@ -953,7 +905,7 @@ function buildAlbum() {
   const journal = el('div', 'a-journal')
   journal.innerHTML =
     `함께한 지 <b>${daysTogether(album, Date.now())}일째</b> · 함께 보낸 시간 <b>${fmtHours(j.totalSec)}</b><br>` +
-    `간식 <b>${j.feeds}</b> · 쓰다듬기 <b>${j.pets}</b> · 같이 일하기 <b>${j.coworkSessions}</b> · 인사 <b>${j.greets}</b><br>` +
+    `같이 일하기 <b>${j.coworkSessions}</b> · 인사 <b>${j.greets}</b> · 할일 완료 <b>${j.todosDone}</b><br>` +
     `주운 보물 <b>${foundKinds(album)}</b> / ${MEMENTOS.length}종`
   albumPanel.appendChild(journal)
 

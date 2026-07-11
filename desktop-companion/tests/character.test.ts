@@ -136,11 +136,11 @@ describe('명령과 상호작용', () => {
     expect(char.state).toBe('idle')
   })
 
-  it('깨어 있을 때 클릭하면 하트 이모트가 나온다', () => {
+  it('깨어 있을 때 클릭해도 아무 일도 없다 (쓰다듬기 없음 — 동료 컨셉)', () => {
     const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.5)
     char.commandStay()
     char.poke()
-    expect(char.emoteTimer).toBeGreaterThan(0)
+    expect(char.emoteTimer).toBe(0)
     expect(char.state).toBe('stay')
   })
 
@@ -193,25 +193,7 @@ describe('집어 옮기기 (held)', () => {
   })
 })
 
-describe('스탯 시스템', () => {
-  it('간식을 주면 허기가 줄고 기분이 좋아진다', () => {
-    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.5)
-    char.hunger = 90
-    const moodBefore = char.mood
-    char.feed()
-    expect(char.hunger).toBe(90 - DEFAULT_CONFIG.hungerFeedRelief)
-    expect(char.mood).toBeGreaterThan(moodBefore)
-    expect(char.messages).toContain('♪')
-  })
-
-  it('배가 고프면 조르는 말풍선을 띄운다', () => {
-    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.5)
-    char.hunger = 95
-    char.commandStay()
-    simulate(char, makeWorld(), 1)
-    expect(char.messages).toContain('~?')
-  })
-
+describe('스탯 시스템 (내부 행동 리듬 — UI 비노출)', () => {
   it('졸림이 임계값을 넘으면 스스로 낮잠을 자고, 자고 나면 깬다', () => {
     // 빠른 테스트를 위해 회복 속도를 크게
     const cfg = { ...DEFAULT_CONFIG, sleepinessNapRelief: 50 }
