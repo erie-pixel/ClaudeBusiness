@@ -521,4 +521,45 @@ describe('타이핑 시작 반응 (jot)', () => {
     char.notifyTypingStarted()
     expect(char.state).toBe('follow')
   })
+
+  it('한 번 반응한 뒤에는 긴 쿨다운 동안 다시 반응하지 않는다 (생활 행동)', () => {
+    const char = new Character(0, CY, DEFAULT_CONFIG, () => 0.1)
+    char.state = 'idle'
+    char.notifyTypingStarted()
+    expect(char.state).toBe('jot')
+    simulate(char, makeWorld(), 10) // jot이 끝나고 일상 복귀
+    expect(char.state).not.toBe('jot')
+    char.state = 'idle'
+    char.notifyTypingStarted() // 쿨다운(5분+) 중 — 발동 안 함
+    expect(char.state).toBe('idle')
+  })
+})
+
+describe('응원하러 오기 (cheer)', () => {
+  it('작업이 이어지면 cowork 대신 가끔 커서 근처로 와서 응원한다', () => {
+    const cfg = { ...DEFAULT_CONFIG, coworkThreshold: 2, coworkChance: 0 } // cowork은 절대 발동 안 함
+    const char = new Character(0, 300, cfg, () => 0.4) // 0.4 < 0.5 → cheer 발동
+    char.state = 'idle'
+    const world = makeWorld(200, 300)
+    world.userActive = true
+    simulate(char, world, 4)
+    expect(char.state).toBe('cheer')
+    simulate(char, world, 15) // 커서 근처 도착 → 응원 → 종료
+    expect(char.messages).toEqual(expect.arrayContaining(['♪', '!']))
+    expect(char.events).toContain('cheered')
+    expect(char.state).not.toBe('cheer')
+  })
+
+  it('응원 후에는 쿨다운 동안 다시 오지 않는다', () => {
+    const cfg = { ...DEFAULT_CONFIG, coworkThreshold: 2, coworkChance: 0 }
+    const char = new Character(0, 300, cfg, () => 0.4)
+    char.state = 'idle'
+    const world = makeWorld(200, 300)
+    world.userActive = true
+    simulate(char, world, 25) // 첫 응원 완료
+    const cheeredOnce = char.events.filter((e) => e === 'cheered').length
+    expect(cheeredOnce).toBe(1)
+    simulate(char, world, 60) // 쿨다운(7분+) 안 — 재발동 없음
+    expect(char.events.filter((e) => e === 'cheered').length).toBe(1)
+  })
 })

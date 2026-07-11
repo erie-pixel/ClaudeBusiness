@@ -17,6 +17,7 @@ export type StateName =
   | 'sit' // 소파에 앉아 쉬기 (홈 모드)
   | 'social' // 친구 캐릭터에게 다가가 인사 (멀티플레이)
   | 'jot' // 사용자가 막 타이핑을 시작한 순간 반응해 잠깐 받아적는 흉내
+  | 'cheer' // 오래 일하는 사용자를 응원하러 커서 근처로 다가옴
 
 export interface Bounds {
   minX: number
@@ -172,7 +173,8 @@ export class Character {
   /** 의미 이벤트 큐 — 렌더러가 매 프레임 비워 간다 (수집 앨범 등 부가 시스템용).
    * 'wander-arrive': 배회 목적지 도착 (기념품 발견 추첨 지점)
    * 'cowork-end': 같이 일하기 한 세션 종료
-   * 'greeted': 친구에게 인사함 */
+   * 'greeted': 친구에게 인사함
+   * 'cheered': 일하는 사용자를 응원하러 옴 */
   events: string[] = []
 
   // 스탯 (0~100)
@@ -198,6 +200,13 @@ export class Character {
   private peekFaceDir: 1 | -1 = 1
   private peekArrived = false
   private jotTimer = 0
+  /** 받아적기 흉내 재발동 쿨다운 — 생활 행동답게 가끔만 (매 타이핑 반응 방지) */
+  private jotCooldown = 0
+  private cheerTarget: { x: number; y: number } | null = null
+  private cheerTimer = 0
+  private cheerArrived = false
+  /** 응원 재발동 쿨다운 */
+  private cheerCooldown = 0
   private workDesire = 0
   private coworkTarget: { x: number; y: number } | null = null
   private coworkTimer = 0
@@ -332,13 +341,16 @@ export class Character {
     return { x, y: rect.y }
   }
 
-  /** 사용자가 막 타이핑을 시작한 순간(가만있다가→입력) 알림 → 한가하면 가끔 반응해서
-   * 잠깐 앉아 받아적는 흉내를 낸다. 이미 뭔가 하고 있으면 방해하지 않는다. */
+  /** 사용자가 막 타이핑을 시작한 순간(가만있다가→입력) 알림. 생활 행동의 하나라서
+   * 매번이 아니라 가끔만 — 확률에 더해 긴 쿨다운(5분+)이 걸려 있고, 이미 뭔가
+   * 하고 있으면 방해하지 않는다. */
   notifyTypingStarted() {
+    if (this.jotCooldown > 0) return
     if (this.state !== 'wander' && this.state !== 'idle') return
     if (this.rng() < 0.35) {
       this.state = 'jot'
       this.jotTimer = 1.2 + this.rng() * 0.8
+      this.jotCooldown = 300 + this.rng() * 240 // 5~9분에 한 번만
       this.say('!')
     }
   }
@@ -411,6 +423,7 @@ export class Character {
         return 'work' // 그 자리에 잠깐 앉아 받아적는 흉내
       case 'sit':
         return this.moving ? 'walk' : 'sit'
+      case 'cheer':
       case 'social':
       case 'wander':
         return this.moving ? 'walk' : 'idle'
@@ -462,6 +475,10 @@ export class Character {
           this.state = 'idle'
           this.pauseTimer = 1 + this.rng() * 2
         }
+        this.regen(dt)
+        break
+      case 'cheer':
+        this.updateCheer(dt, world)
         this.regen(dt)
         break
       case 'cowork':
@@ -523,6 +540,8 @@ export class Character {
     }
 
     if (this.socialCooldown > 0) this.socialCooldown -= dt
+    if (this.jotCooldown > 0) this.jotCooldown -= dt
+    if (this.cheerCooldown > 0) this.cheerCooldown -= dt
 
     // 같이 일하기: 사용자 활동이 꾸준히 이어지면 옆에 와서 같이 일한다 (홈 모드에서는 안 함)
     if (this.coworkCooldown > 0) this.coworkCooldown -= dt
@@ -544,6 +563,13 @@ export class Character {
           this.cfg.coworkTimeMin + this.rng() * (this.cfg.coworkTimeMax - this.cfg.coworkTimeMin)
         this.coworkIdleFor = 0
         this.say('!')
+      } else if (world.cursor && this.cheerCooldown <= 0 && this.rng() < 0.5) {
+        // 같이 일하러 오지는 않더라도 가끔 응원하러 다가온다 — 생활 행동의 하나
+        this.state = 'cheer'
+        this.cheerTarget = { x: world.cursor.x - 60 * this.facing, y: world.cursor.y + 40 }
+        this.cheerTimer = 3 + this.rng() * 2
+        this.cheerArrived = false
+        this.cheerCooldown = 420 + this.rng() * 300 // 7~12분에 한 번만
       }
     }
 
@@ -801,6 +827,38 @@ export class Character {
       this.peekTarget = null
       this.state = 'idle'
       this.pauseTimer = 1 + this.rng() * 3
+    }
+  }
+
+  private updateCheer(dt: number, world: World) {
+    if (!this.cheerTarget) {
+      this.state = 'idle'
+      this.pauseTimer = 1
+      return
+    }
+    const b = world.bounds
+    const tx = Math.max(b.minX, Math.min(b.maxX, this.cheerTarget.x))
+    const ty = Math.max(b.minY, Math.min(b.maxY, this.cheerTarget.y))
+    if (Math.hypot(tx - this.x, ty - this.y) > 6) {
+      this.moving = this.moveToward(tx, ty, this.cfg.walkSpeed, dt)
+      return
+    }
+    if (!this.cheerArrived) {
+      this.cheerArrived = true
+      // 커서(작업 지점)를 바라보며 응원
+      if (world.cursor && Math.abs(world.cursor.x - this.x) > 1) {
+        this.facing = world.cursor.x > this.x ? 1 : -1
+      }
+      this.say('♪')
+      this.say('!')
+      this.emoteTimer = 1.6
+      if (this.events.length < 8) this.events.push('cheered')
+    }
+    this.cheerTimer -= dt
+    if (this.cheerTimer <= 0) {
+      this.cheerTarget = null
+      this.state = 'idle'
+      this.pauseTimer = 2 + this.rng() * 3
     }
   }
 
