@@ -139,6 +139,92 @@
         background: #5b8bd9;
         color: #fff;
       }
+      /* 수집 앨범 (함께한 날들) — 옷장과 같은 픽셀 스타일 */
+      #album {
+        display: none;
+        position: absolute;
+        min-width: 232px;
+        max-width: 260px;
+        background: #1d1f2b;
+        border: 3px solid #454a66;
+        box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        font-weight: bold;
+        color: #e8e9f5;
+        padding: 8px;
+        image-rendering: pixelated;
+      }
+      #album .w-title {
+        font-size: 13px;
+        margin-bottom: 6px;
+        color: #aab0cc;
+      }
+      #album .a-journal {
+        font-size: 11px;
+        font-weight: normal;
+        color: #aab0cc;
+        line-height: 1.5;
+        margin-bottom: 8px;
+      }
+      #album .a-journal b {
+        color: #e8e9f5;
+      }
+      #album .a-grid {
+        display: grid;
+        grid-template-columns: repeat(6, 32px);
+        gap: 4px;
+        margin-bottom: 6px;
+      }
+      #album .a-cell {
+        width: 32px;
+        height: 32px;
+        box-sizing: border-box;
+        background: #10121b;
+        border: 2px solid #454a66;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        cursor: pointer;
+      }
+      #album .a-cell.rare {
+        border-color: #ffd76a;
+      }
+      #album .a-cell canvas {
+        image-rendering: pixelated;
+        width: 24px;
+        height: 24px;
+      }
+      #album .a-cell .a-count {
+        position: absolute;
+        right: 1px;
+        bottom: -1px;
+        font-size: 9px;
+        color: #ffd76a;
+      }
+      #album .a-cell.locked {
+        color: #454a66;
+        font-size: 13px;
+        cursor: default;
+      }
+      #album .a-detail {
+        min-height: 28px;
+        font-size: 11px;
+        font-weight: normal;
+        color: #d9c9a0;
+        line-height: 1.4;
+        margin-bottom: 4px;
+      }
+      #album .a-close {
+        text-align: center;
+        padding: 5px;
+        cursor: pointer;
+      }
+      #album .a-close:hover {
+        background: #5b8bd9;
+        color: #fff;
+      }
       /* 친구들/기록 패널 — 옷장과 같은 픽셀 스타일 */
       #mp,
       #history {
@@ -348,6 +434,7 @@
     <div id="bubbles"></div>
     <div id="menu"></div>
     <div id="wardrobe"></div>
+    <div id="album"></div>
     <div id="mp"></div>
     <div id="history"></div>
     <div id="chat"><input type="text" maxlength="200" placeholder="메시지 입력 후 Enter" /></div>

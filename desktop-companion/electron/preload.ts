@@ -31,11 +31,13 @@ export interface CompanionBridge {
   onActiveWindow(cb: (rect: { x: number; y: number; w: number; h: number }) => void): void
   onUserInput(cb: (input: { typing: boolean; idleSec: number }) => void): void
   onSettings(cb: (s: RendererSettings) => void): void
+  onAlbum(cb: (data: unknown) => void): void
   onOpenChat(cb: () => void): void
   setInteractive(interactive: boolean): void
   setPollRate(active: boolean): void
   saveSofa(sofa: SofaState): void
   saveLook(look: LookState): void
+  saveAlbum(data: unknown): void
   saveMp(mp: { playerName: string; serverUrl: string }): void
   ensureRelay(): Promise<{ ok: boolean; port?: number; ips?: string[]; error?: string }>
   hideWindow(): void
@@ -55,11 +57,15 @@ const bridge: CompanionBridge = {
   onSettings: (cb) => {
     ipcRenderer.on('settings', (_e, s) => cb(s))
   },
+  onAlbum: (cb) => {
+    ipcRenderer.on('album', (_e, data) => cb(data))
+  },
   onOpenChat: (cb) => {
     ipcRenderer.on('open-chat', () => cb())
   },
   saveSofa: (sofa) => ipcRenderer.send('save-sofa', sofa),
   saveLook: (look) => ipcRenderer.send('save-look', look),
+  saveAlbum: (data) => ipcRenderer.send('save-album', data),
   saveMp: (mp) => ipcRenderer.send('save-mp', mp),
   ensureRelay: () => ipcRenderer.invoke('ensure-relay'),
   setInteractive: (v) => ipcRenderer.send('set-interactive', v),

@@ -16,6 +16,17 @@ import {
   type BakedFrame,
 } from './engine/sprite'
 import { partsBySlot, type PartSlot } from './engine/parts'
+import {
+  MEMENTOS,
+  MEMENTO_PALETTE,
+  emptyAlbum,
+  normalizeAlbum,
+  rollFind,
+  foundKinds,
+  daysTogether,
+  type AlbumData,
+  type MementoDef,
+} from './engine/collection'
 import { NetClient, type NetPeerInfo, type NetState, type PeekSignalType } from './net/client'
 import { PeerStore, type Peer } from './net/peers'
 import type { CompanionBridge, SofaState } from '../electron/preload'
@@ -339,6 +350,7 @@ bridge.onUserInput((input) => {
 let interactive = false
 let menuOpen = false
 let wardrobeOpen = false
+let albumOpen = false
 let mpOpen = false
 let historyOpen = false
 let chatOpen = false
@@ -367,6 +379,7 @@ function syncInteractive(cursor: { x: number; y: number }) {
   const want =
     menuOpen ||
     wardrobeOpen ||
+    albumOpen ||
     mpOpen ||
     historyOpen ||
     chatOpen ||
@@ -498,10 +511,25 @@ function buildMenu() {
       : { label: '낮잠 자', action: () => char.commandNap() },
     { label: '여기서 기다려', action: () => char.commandStay() },
     'sep',
-    { label: '간식 주기', action: () => char.feed() },
-    { label: '쓰다듬기', action: () => char.poke() },
+    {
+      label: '간식 주기',
+      action: () => {
+        char.feed()
+        album.journal.feeds++
+        saveAlbumNow()
+      },
+    },
+    {
+      label: '쓰다듬기',
+      action: () => {
+        char.poke()
+        album.journal.pets++
+        saveAlbumNow()
+      },
+    },
     'sep',
     { label: '옷장 열기…', action: () => openWardrobe() },
+    { label: `앨범 보기 (${foundKinds(album)}/${MEMENTOS.length})…`, action: () => openAlbum() },
     { label: roomCode ? `친구들 (${peers.peers.size + 1}명 접속)…` : '친구들…', action: () => openMp() },
     ...(roomCode
       ? [
@@ -626,13 +654,17 @@ window.addEventListener('click', (e) => {
   // 그리면(innerHTML 교체) 이 핸들러 시점에는 target이 이미 DOM에서 떨어져
   // contains()가 false가 되어 옷장이 클릭할 때마다 닫혀버린다.
   const path = e.composedPath()
-  if (path.includes(menu) || path.includes(wardrobe) || path.includes(mp) || path.includes(history) || path.includes(chatWrap) || path.includes(peekReq)) return
+  if (path.includes(menu) || path.includes(wardrobe) || path.includes(albumPanel) || path.includes(mp) || path.includes(history) || path.includes(chatWrap) || path.includes(peekReq)) return
   if (menuOpen) {
     closeMenu()
     return
   }
   if (wardrobeOpen) {
     closeWardrobe()
+    return
+  }
+  if (albumOpen) {
+    closeAlbum()
     return
   }
   if (mpOpen) {
@@ -644,6 +676,11 @@ window.addEventListener('click', (e) => {
     return
   }
   if (overCharacter(e.clientX, e.clientY)) {
+    if (char.state !== 'nap') {
+      // 낮잠 깨우기는 쓰다듬기로 세지 않는다
+      album.journal.pets++
+      saveAlbumNow()
+    }
     char.poke()
     return
   }
@@ -778,6 +815,167 @@ function closeWardrobe() {
   wardrobeOpen = false
   wardrobe.style.display = 'none'
   if (world.cursor) syncInteractive(world.cursor)
+}
+
+// ---------- 수집 앨범 "함께한 날들" ----------
+// 배회하다 도착한 곳에서 가끔 기념품을 주워온다 — "켜두면 쌓이는 것".
+// 파츠 잠금 해제가 아닌 순수 수집/기록 (buy-to-play 원칙과 충돌하지 않음).
+
+const albumPanel = document.getElementById('album') as HTMLDivElement
+
+let album: AlbumData = emptyAlbum(Date.now())
+let albumSaveTimer = 0
+/** 발견 연출: 주운 물건이 머리 위로 떠올랐다 사라진다 */
+let pickupFx: { def: MementoDef; timer: number } | null = null
+const PICKUP_TIME = 2.2
+
+bridge.onAlbum((data) => {
+  album = normalizeAlbum(data, Date.now())
+})
+
+function saveAlbumNow() {
+  bridge.saveAlbum(album)
+}
+
+/** 기념품 8x8 픽셀 맵 → 캔버스 (id별 캐시) */
+const mementoCanvases = new Map<string, HTMLCanvasElement>()
+function mementoCanvas(def: MementoDef): HTMLCanvasElement {
+  let c = mementoCanvases.get(def.id)
+  if (c) return c
+  c = document.createElement('canvas')
+  c.width = 8
+  c.height = 8
+  const mc = c.getContext('2d')!
+  def.map.forEach((row, y) => {
+    for (let x = 0; x < 8; x++) {
+      const color = MEMENTO_PALETTE[row[x]]
+      if (!color) continue
+      mc.fillStyle = color
+      mc.fillRect(x, y, 1, 1)
+    }
+  })
+  mementoCanvases.set(def.id, c)
+  return c
+}
+
+function fmtHours(sec: number): string {
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  return h > 0 ? `${h}시간 ${m}분` : `${m}분`
+}
+
+function buildAlbum() {
+  albumPanel.innerHTML = ''
+  albumPanel.appendChild(el('div', 'w-title', '함께한 날들'))
+
+  const j = album.journal
+  const journal = el('div', 'a-journal')
+  journal.innerHTML =
+    `함께한 지 <b>${daysTogether(album, Date.now())}일째</b> · 함께 보낸 시간 <b>${fmtHours(j.totalSec)}</b><br>` +
+    `간식 <b>${j.feeds}</b> · 쓰다듬기 <b>${j.pets}</b> · 같이 일하기 <b>${j.coworkSessions}</b> · 인사 <b>${j.greets}</b><br>` +
+    `주운 보물 <b>${foundKinds(album)}</b> / ${MEMENTOS.length}종`
+  albumPanel.appendChild(journal)
+
+  const detail = el('div', 'a-detail', '칸을 눌러 보세요')
+
+  const grid = el('div', 'a-grid')
+  for (const def of MEMENTOS) {
+    const entry = album.found[def.id]
+    const cell = el('div', 'a-cell' + (entry && def.rarity === 'rare' ? ' rare' : '') + (entry ? '' : ' locked'))
+    if (entry) {
+      const thumb = mementoCanvas(def).cloneNode(false) as HTMLCanvasElement
+      const tc = thumb.getContext('2d')!
+      tc.imageSmoothingEnabled = false
+      tc.drawImage(mementoCanvas(def), 0, 0)
+      cell.appendChild(thumb)
+      if (entry.count > 1) cell.appendChild(el('span', 'a-count', `${entry.count}`))
+      cell.addEventListener('click', () => {
+        detail.textContent = `${def.name} ×${entry.count} — ${def.desc}`
+      })
+    } else {
+      cell.textContent = '?'
+      cell.addEventListener('click', () => {
+        detail.textContent = '아직 못 주운 물건이에요. 캐릭터가 돌아다니다 언젠가 찾아올 거예요.'
+      })
+    }
+    grid.appendChild(cell)
+  }
+  albumPanel.appendChild(grid)
+  albumPanel.appendChild(detail)
+
+  const close = el('div', 'item a-close', '닫기')
+  close.addEventListener('click', closeAlbum)
+  albumPanel.appendChild(close)
+}
+
+function openAlbum() {
+  buildAlbum()
+  albumOpen = true
+  albumPanel.style.display = 'block'
+  albumPanel.style.left = `${Math.min(Math.max(8, char.x - 120), canvas.width - 270)}px`
+  albumPanel.style.top = `${Math.min(Math.max(8, char.y - H - 240), canvas.height - 300)}px`
+  bridge.setInteractive(true)
+  interactive = true
+}
+
+function closeAlbum() {
+  if (!albumOpen) return
+  albumOpen = false
+  albumPanel.style.display = 'none'
+  if (world.cursor) syncInteractive(world.cursor)
+}
+
+/** 캐릭터 의미 이벤트 처리 — 배회 도착 시 기념품 추첨, 일지 카운터 */
+function handleCharEvents(dt: number) {
+  for (const ev of char.events.splice(0)) {
+    if (ev === 'wander-arrive') {
+      const found = rollFind(album, Math.random, Date.now())
+      if (found) {
+        pickupFx = { def: found, timer: PICKUP_TIME }
+        char.messages.push('!')
+        pushLog('발견', `${found.name}을(를) 주웠어요!`)
+        saveAlbumNow()
+        if (albumOpen) buildAlbum()
+      }
+    } else if (ev === 'cowork-end') {
+      album.journal.coworkSessions++
+      saveAlbumNow()
+    } else if (ev === 'greeted') {
+      album.journal.greets++
+      saveAlbumNow()
+    }
+  }
+  // 함께 보낸 시간 누적 — 디스크에는 45초마다 저장 (매 프레임 쓰기 방지)
+  album.journal.totalSec += dt
+  albumSaveTimer += dt
+  if (albumSaveTimer >= 45) {
+    albumSaveTimer = 0
+    saveAlbumNow()
+  }
+  if (pickupFx) {
+    pickupFx.timer -= dt
+    if (pickupFx.timer <= 0) pickupFx = null
+  }
+}
+
+/** 발견 연출 그리기 — 주운 물건이 머리 위로 떠오르며 사라진다 */
+function drawPickup() {
+  if (!pickupFx) return
+  const t = 1 - pickupFx.timer / PICKUP_TIME // 0→1
+  const rise = t * 16 * (SCALE / 2)
+  const alpha = t > 0.75 ? 1 - (t - 0.75) / 0.25 : 1
+  const size = 8 * SCALE
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(
+    mementoCanvas(pickupFx.def),
+    Math.round(char.x - size / 2),
+    Math.round(char.y - H - 26 - rise),
+    size,
+    size,
+  )
+  ctx.restore()
 }
 
 // ---------- 멀티플레이 UI: 친구들 패널 / 채팅 / 기록 / 말풍선 ----------
@@ -1623,6 +1821,7 @@ function draw() {
 
   drawEmote()
   drawPeerEmotes(dtForDraw)
+  drawPickup()
 
   // 화면 공유 중 상시 표시 — 몰래 공유되는 일이 없도록 (프라이버시 원칙)
   if (shares.size > 0) {
@@ -1666,6 +1865,7 @@ function loop(now: number) {
   world.userIdleSec = watcherIdleSec
   char.update(dt, world)
   updateEmote(dt)
+  handleCharEvents(dt)
 
   // 멀티플레이: 피어 보간, 상태 전송, 말풍선 위치, 다가가서 인사
   tickReconnect(dt)

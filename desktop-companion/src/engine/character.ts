@@ -169,6 +169,11 @@ export class Character {
   emoteTimer = 0
   /** 이모트 심볼 큐 (!, ?, ♪ 등) — 렌더러가 shift()로 꺼내 머리 위에 표시 */
   messages: string[] = []
+  /** 의미 이벤트 큐 — 렌더러가 매 프레임 비워 간다 (수집 앨범 등 부가 시스템용).
+   * 'wander-arrive': 배회 목적지 도착 (기념품 발견 추첨 지점)
+   * 'cowork-end': 같이 일하기 한 세션 종료
+   * 'greeted': 친구에게 인사함 */
+  events: string[] = []
 
   // 스탯 (0~100)
   stamina: number
@@ -634,6 +639,7 @@ export class Character {
       this.state = 'idle'
       this.pauseTimer =
         this.cfg.wanderPauseMin + this.rng() * (this.cfg.wanderPauseMax - this.cfg.wanderPauseMin)
+      if (this.events.length < 8) this.events.push('wander-arrive')
       return
     }
     this.moving = this.moveToward(t.x, t.y, this.cfg.walkSpeed, dt)
@@ -683,6 +689,7 @@ export class Character {
     this.pauseTimer = pause
     this.workDesire = 0
     this.coworkCooldown = 60 // 방금 일했으니 당분간은 다시 안 옴
+    if (this.events.length < 8) this.events.push('cowork-end')
   }
 
   private updateSit(dt: number, world: World) {
@@ -729,6 +736,7 @@ export class Character {
       this.say(first)
       this.say(first === '!' ? '♪' : '!')
       this.emoteTimer = 1.6 // 하트도 살짝
+      if (this.events.length < 8) this.events.push('greeted')
     }
     this.socialTimer -= dt
     if (this.socialTimer <= 0) {
