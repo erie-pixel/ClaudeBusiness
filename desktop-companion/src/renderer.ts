@@ -15,7 +15,7 @@ import {
   type FrameName,
   type BakedFrame,
 } from './engine/sprite'
-import { partsBySlot, type PartSlot } from './engine/parts'
+import { partsBySlot, setModPacks, validatePack, type PartsPack, type PartSlot } from './engine/parts'
 import {
   MEMENTOS,
   MEMENTO_PALETTE,
@@ -61,6 +61,32 @@ function applyLook(next: Look) {
   look = { ...next }
   frames = bakeAllFrames(look)
 }
+
+// ---------- 모드 파츠 팩 (핫리로드) ----------
+// mods/ 폴더의 manifest.json이 바뀔 때마다 메인 프로세스가 다시 보내준다.
+// 검증(린트) 통과분만 등록 → 프레임 리베이크 → 열려 있으면 옷장 갱신.
+
+bridge.onModPacks((raws) => {
+  const valid: PartsPack[] = []
+  const problems: string[] = []
+  for (const raw of Array.isArray(raws) ? raws : []) {
+    const { pack, errors } = validatePack(raw)
+    if (pack) valid.push(pack)
+    if (errors.length > 0) {
+      const name =
+        typeof raw === 'object' && raw !== null && typeof (raw as PartsPack).name === 'string'
+          ? (raw as PartsPack).name
+          : '?'
+      problems.push(`${name}: ${errors[0]}${errors.length > 1 ? ` 외 ${errors.length - 1}건` : ''}`)
+    }
+  }
+  setModPacks(valid)
+  applyLook(look) // 현재 look 기준 리베이크 (사라진 파츠는 getPart가 폴백)
+  peerFramesCache.clear() // 친구 캐릭터도 새 파츠 기준으로 다시 굽는다
+  if (valid.length > 0) pushLog('모드', `파츠 팩 ${valid.length}개 불러옴 (${valid.map((p) => p.name).join(', ')})`)
+  for (const p of problems) pushLog('모드', `팩 검증 실패 — ${p}`)
+  if (wardrobeOpen) buildWardrobe()
+})
 
 // ---------- 크기/경계 ----------
 
@@ -838,6 +864,13 @@ function buildWardrobe() {
     })
     wardrobe.appendChild(row)
   }
+
+  // 모드 파츠 팩 폴더 — 팩(manifest.json)을 넣으면 즉시 옷장에 나타난다 (핫리로드)
+  const mods = document.createElement('div')
+  mods.className = 'item w-close'
+  mods.textContent = '모드 폴더 열기'
+  mods.addEventListener('click', () => bridge.openModsFolder())
+  wardrobe.appendChild(mods)
 
   const close = document.createElement('div')
   close.className = 'item w-close'

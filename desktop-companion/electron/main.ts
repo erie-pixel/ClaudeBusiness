@@ -1,10 +1,11 @@
-import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage, globalShortcut, session, desktopCapturer } from 'electron'
+import { app, BrowserWindow, Tray, Menu, screen, ipcMain, nativeImage, globalShortcut, session, desktopCapturer, shell } from 'electron'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import { startFullscreenWatcher, stopFullscreenWatcher } from './fullscreen-watcher'
 import { loadSettings, saveSettings, type AppSettings } from './settings'
 import { loadAlbum, saveAlbum } from './album-store'
 import { loadTodos, saveTodos } from './todo-store'
+import { modsDir, scanModPacks, watchModPacks } from './mod-loader'
 import { startRelay, type RelayHandle } from '../server/relay.mjs'
 
 // "방 만들기" 시 앱에 내장된 relay 서버 — 별도 cmd/서버 실행이 필요 없다
@@ -24,6 +25,7 @@ function lanAddresses(): string[] {
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
 let cursorTimer: NodeJS.Timeout | null = null
+let stopModWatch: (() => void) | null = null
 let settings: AppSettings = {
   autoStart: false,
   scale: 2,
@@ -144,6 +146,8 @@ function createWindow() {
     // 수집 앨범(함께한 날들)·할일 목록 — 저장된 내용을 렌더러에 전달 (없으면 null)
     win?.webContents.send('album', loadAlbum())
     win?.webContents.send('todos', loadTodos())
+    // 모드 파츠 팩 — 스캔 결과를 전달하고, mods/ 폴더 변경 시 핫리로드
+    win?.webContents.send('mod-packs', scanModPacks())
   })
   // 안전망: transparent 창은 환경에 따라 ready-to-show가 오지 않을 수 있다
   // (그러면 캐릭터가 영영 표시되지 않음) — 1.5초 후에도 안 보이면 강제 표시
@@ -269,6 +273,10 @@ app.whenReady().then(() => {
   applyAutoStart()
   createWindow()
   createTray()
+  // 모드 폴더 핫리로드 — 팩을 넣거나 고치면 즉시 옷장에 반영
+  stopModWatch = watchModPacks(() => {
+    if (win && !win.isDestroyed()) win.webContents.send('mod-packs', scanModPacks())
+  })
   // 화면 엿보기(Phase 4): 렌더러의 getDisplayMedia 요청에 주 화면을 공급.
   // 실제 공유는 상대의 명시적 승인 후에만 시작된다 (renderer의 승인 패널).
   session.defaultSession.setDisplayMediaRequestHandler(
@@ -325,6 +333,7 @@ app.on('window-all-closed', () => app.quit())
 app.on('before-quit', () => {
   if (cursorTimer) clearTimeout(cursorTimer)
   stopFullscreenWatcher()
+  stopModWatch?.()
 })
 
 app.on('will-quit', () => {
@@ -363,6 +372,10 @@ ipcMain.on('save-todos', (_e, data: unknown) => {
 
 ipcMain.on('save-onboarded', () => {
   updateSettings({ onboarded: true })
+})
+
+ipcMain.on('open-mods-folder', () => {
+  shell.openPath(modsDir())
 })
 
 ipcMain.on('save-mp', (_e, mp: { playerName: string; serverUrl: string }) => {

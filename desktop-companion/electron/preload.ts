@@ -35,6 +35,8 @@ export interface CompanionBridge {
   onSettings(cb: (s: RendererSettings) => void): void
   onAlbum(cb: (data: unknown) => void): void
   onTodos(cb: (data: unknown) => void): void
+  onModPacks(cb: (packs: unknown[]) => void): void
+  openModsFolder(): void
   onOpenChat(cb: () => void): void
   setInteractive(interactive: boolean): void
   setPollRate(active: boolean): void
@@ -68,6 +70,10 @@ const bridge: CompanionBridge = {
   onTodos: (cb) => {
     ipcRenderer.on('todos', (_e, data) => cb(data))
   },
+  onModPacks: (cb) => {
+    ipcRenderer.on('mod-packs', (_e, packs) => cb(packs))
+  },
+  openModsFolder: () => ipcRenderer.send('open-mods-folder'),
   onOpenChat: (cb) => {
     ipcRenderer.on('open-chat', () => cb())
   },

@@ -295,8 +295,109 @@ export const BUILTIN_PACK: PartsPack = {
   ],
 }
 
-// 추후 모드 팩 로더가 여기로 팩을 추가한다 (내장 팩과 동일한 취급)
+// 모드 팩 로더가 여기로 팩을 추가한다 (내장 팩과 동일한 취급 — 1급 시민)
 const packs: PartsPack[] = [BUILTIN_PACK]
+
+const VALID_SLOTS: ReadonlySet<string> = new Set(['hair', 'eyes', 'mouth', 'top'])
+const MAX_PARTS_PER_PACK = 100
+const MAX_ROWS = 24
+const MAX_ROW_LEN = 16
+
+/** 파츠 맵 구조 검사 — 문제가 있으면 오류 문자열, 없으면 null */
+function lintMap(map: unknown, label: string): string | null {
+  if (typeof map !== 'object' || map === null) return `${label}: map이 없음`
+  const m = map as Partial<PartMap>
+  if (typeof m.y0 !== 'number' || !Number.isInteger(m.y0) || m.y0 < 0 || m.y0 >= MAX_ROWS) {
+    return `${label}: y0는 0~${MAX_ROWS - 1} 정수여야 함`
+  }
+  if (!Array.isArray(m.rows) || m.rows.length === 0 || m.rows.length > MAX_ROWS) {
+    return `${label}: rows는 1~${MAX_ROWS}줄이어야 함`
+  }
+  for (const row of m.rows) {
+    if (typeof row !== 'string' || row.length > MAX_ROW_LEN) {
+      return `${label}: 각 행은 최대 ${MAX_ROW_LEN}자 문자열이어야 함`
+    }
+  }
+  return null
+}
+
+/** 모드 manifest 검증 (Workshop 업로드 전 린트의 원형 — 순수 로직, 테스트 대상).
+ * 반환: 통과하면 pack, 아니면 errors에 사람이 읽을 사유 목록 */
+export function validatePack(raw: unknown): { pack: PartsPack | null; errors: string[] } {
+  const errors: string[] = []
+  if (typeof raw !== 'object' || raw === null) return { pack: null, errors: ['manifest가 객체가 아님'] }
+  const p = raw as Partial<PartsPack>
+  if (typeof p.name !== 'string' || !p.name.trim()) errors.push('name 누락')
+  if (typeof p.author !== 'string') errors.push('author 누락')
+  if (typeof p.version !== 'string') errors.push('version 누락')
+  if (!Array.isArray(p.parts) || p.parts.length === 0) {
+    errors.push('parts가 비어 있음')
+    return { pack: null, errors }
+  }
+  if (p.parts.length > MAX_PARTS_PER_PACK) errors.push(`파츠는 팩당 최대 ${MAX_PARTS_PER_PACK}개`)
+  const seen = new Set<string>()
+  const parts: PartDef[] = []
+  for (const rawPart of p.parts) {
+    if (typeof rawPart !== 'object' || rawPart === null) {
+      errors.push('파츠 항목이 객체가 아님')
+      continue
+    }
+    const part = rawPart as Partial<PartDef>
+    const label = typeof part.id === 'string' ? part.id : '(id 없음)'
+    if (typeof part.id !== 'string' || !part.id.trim() || part.id.length > 40) {
+      errors.push(`${label}: id는 1~40자 문자열이어야 함`)
+      continue
+    }
+    if (seen.has(part.id)) {
+      errors.push(`${label}: 팩 안에서 id 중복`)
+      continue
+    }
+    if (typeof part.slot !== 'string' || !VALID_SLOTS.has(part.slot)) {
+      errors.push(`${label}: slot은 hair/eyes/mouth/top 중 하나여야 함`)
+      continue
+    }
+    if (typeof part.name !== 'string' || !part.name.trim()) {
+      errors.push(`${label}: name 누락`)
+      continue
+    }
+    const mapErr = lintMap(part.map, label)
+    if (mapErr) {
+      errors.push(mapErr)
+      continue
+    }
+    if (part.back !== undefined) {
+      const backErr = lintMap(part.back, `${label}(back)`)
+      if (backErr) {
+        errors.push(backErr)
+        continue
+      }
+    }
+    seen.add(part.id)
+    parts.push({
+      id: part.id,
+      slot: part.slot as PartSlot,
+      name: part.name.slice(0, 40),
+      map: part.map as PartMap,
+      back: part.back as PartMap | undefined,
+    })
+  }
+  if (parts.length === 0) return { pack: null, errors }
+  return {
+    pack: {
+      name: (p.name as string) ?? '?',
+      author: (p.author as string) ?? '?',
+      version: (p.version as string) ?? '0',
+      parts,
+    },
+    errors,
+  }
+}
+
+/** 모드 팩 전체 교체 (핫리로드) — 내장 팩은 항상 유지된다 */
+export function setModPacks(modPacks: PartsPack[]) {
+  packs.length = 0
+  packs.push(BUILTIN_PACK, ...modPacks)
+}
 
 export function partsBySlot(slot: PartSlot): PartDef[] {
   return packs.flatMap((p) => p.parts.filter((part) => part.slot === slot))

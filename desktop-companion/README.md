@@ -30,14 +30,46 @@
 
 기본값: 크기 **작게(2x)**, 활동성 **보통** (예전 '차분함'이 지금의 '활발함').
 
-### 파츠 매니페스트 = 모드 포맷 (기획서 §8)
+### 파츠 매니페스트 = 모드 포맷 (기획서 §8) — 모드 로더 동작 중
 
-`src/engine/parts.ts`의 `PartsPack` 스키마가 그대로 Workshop 파츠 팩의
-manifest.json 포맷이다: `{ name, author, version, parts: [{ id, slot, name,
-map: { y0, rows }, back? }] }`. 엔진은 내장 팩과 모드 팩을 구분하지 않으며
-(`packs[]`에 추가만 하면 옷장에 나타남), 파츠 맵 규격 검증 테스트
-(`tests/parts.test.ts`)가 업로드 린트의 원형이다. 다음 단계: 폴더 스캔
-로더(핫리로드) + PNG 파츠 지원.
+`src/engine/parts.ts`의 `PartsPack` 스키마가 그대로 파츠 팩 모드의
+manifest.json 포맷이다. **모드 로더가 이미 동작한다**:
+
+1. 옷장 하단 **"모드 폴더 열기"** 클릭 (또는 직접: Windows
+   `%APPDATA%\Desktop Companion\mods`, macOS
+   `~/Library/Application Support/Desktop Companion/mods` — 개발 모드에서는
+   앱 이름 폴더가 `desktop-companion`)
+2. 팩 폴더를 만들고 안에 `manifest.json` 작성:
+
+```json
+{
+  "name": "내 파츠 팩",
+  "author": "나",
+  "version": "1.0.0",
+  "parts": [
+    {
+      "id": "my-mohawk",
+      "slot": "hair",
+      "name": "모히칸",
+      "map": { "y0": 0, "rows": [".......KK.......", "....KKKKKKKK...."] },
+      "back": { "y0": 0, "rows": [".......KK.......", "....KKKKKKKK...."] }
+    }
+  ]
+}
+```
+
+- `slot`: `hair` / `eyes` / `mouth` / `top`. `map.rows`는 캐릭터 16x24 그리드
+  기준 팔레트 문자 행(최대 16자), `y0`는 시작 행, `.`은 투명. `back`은 뒷모습
+  프레임용(생략 시 앞모습 재사용). 색상 문자는 내장 파츠와 동일한 팔레트
+  (`K` 머리색, `T` 상의색, `E` 눈, `M` 입, `S` 피부 등 — sprite.ts 참고)를
+  쓰면 옷장 색 견본이 그대로 적용된다.
+- **핫리로드**: 파일을 저장하는 즉시(0.5초 디바운스) 옷장에 반영 — 그리면서
+  캐릭터에 바로 입혀볼 수 있다.
+- **검증(린트)**: 규격에 안 맞는 파츠는 사유와 함께 대화 기록에 표시되고
+  그 파츠만 제외된다 (`validatePack` — Workshop 업로드 전 린트의 원형).
+- 모드는 **데이터(JSON)만 허용, 코드 실행 없음** (기획서 §9.3 보안 원칙).
+- 다음 단계: PNG 스프라이트 시트 파츠 지원, 파츠 템플릿 내보내기,
+  Steam Workshop 업로드/구독 (Phase 5).
 
 ## 실행 (Windows / macOS)
 

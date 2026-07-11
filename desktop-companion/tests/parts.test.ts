@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { ALL_FRAME_NAMES, composeMap, DEFAULT_LOOK, SPRITE_H, SPRITE_W } from '../src/engine/sprite'
-import { BUILTIN_PACK, getPart, partsBySlot } from '../src/engine/parts'
+import { BUILTIN_PACK, getPart, partsBySlot, setModPacks, validatePack } from '../src/engine/parts'
 
 const has = (rows: string[], ch: string) => rows.some((r) => r.includes(ch))
 
@@ -111,5 +111,73 @@ describe('파츠 팩 매니페스트 (모드 포맷)', () => {
       expect(part.map.y0).toBeGreaterThanOrEqual(0)
       expect(part.map.y0 + part.map.rows.length).toBeLessThanOrEqual(SPRITE_H)
     }
+  })
+})
+
+describe('모드 팩 검증/로드 (validatePack + setModPacks)', () => {
+  afterEach(() => setModPacks([])) // 다른 테스트에 모드 팩이 새지 않게
+
+  const GOOD_PACK = {
+    name: '테스트 팩',
+    author: 'tester',
+    version: '1.0.0',
+    parts: [
+      {
+        id: 'mod-mohawk',
+        slot: 'hair',
+        name: '모히칸',
+        map: { y0: 0, rows: ['.......KK.......', '.......KK.......', '....KKKKKKKK....'] },
+      },
+    ],
+  }
+
+  it('규격에 맞는 팩은 통과하고 옷장 목록에 나타난다', () => {
+    const { pack, errors } = validatePack(GOOD_PACK)
+    expect(errors).toEqual([])
+    expect(pack).not.toBeNull()
+    setModPacks([pack!])
+    expect(partsBySlot('hair').some((p) => p.id === 'mod-mohawk')).toBe(true)
+    // 내장 파츠도 그대로 남아 있다 (1급 시민 공존)
+    expect(partsBySlot('hair').some((p) => p.id === 'short')).toBe(true)
+  })
+
+  it('모드 파츠가 composeMap으로 실제 합성된다', () => {
+    const { pack } = validatePack(GOOD_PACK)
+    setModPacks([pack!])
+    const rows = composeMap('idle', { ...DEFAULT_LOOK, hairStyle: 'mod-mohawk' })
+    expect(rows[1]).toContain('K') // 모히칸이 1행(y0=0+padTop 1)에 합성됨
+  })
+
+  it('구조가 깨진 manifest는 사유와 함께 거부된다', () => {
+    expect(validatePack(null).pack).toBeNull()
+    expect(validatePack('x').pack).toBeNull()
+    expect(validatePack({}).errors.length).toBeGreaterThan(0)
+    expect(validatePack({ name: 'x', author: 'y', version: '1', parts: [] }).pack).toBeNull()
+  })
+
+  it('개별 파츠 문제(잘못된 slot, 너무 긴 행, id 중복)는 그 파츠만 걸러낸다', () => {
+    const { pack, errors } = validatePack({
+      name: '섞인 팩',
+      author: 't',
+      version: '1',
+      parts: [
+        GOOD_PACK.parts[0],
+        { id: 'bad-slot', slot: 'pants', name: 'x', map: { y0: 0, rows: ['..'] } },
+        { id: 'bad-row', slot: 'hair', name: 'x', map: { y0: 0, rows: ['.'.repeat(17)] } },
+        { ...GOOD_PACK.parts[0] }, // id 중복
+      ],
+    })
+    expect(pack!.parts).toHaveLength(1)
+    expect(errors.length).toBe(3)
+  })
+
+  it('setModPacks를 다시 호출하면 이전 모드 팩이 교체된다 (핫리로드)', () => {
+    const { pack } = validatePack(GOOD_PACK)
+    setModPacks([pack!])
+    expect(partsBySlot('hair').some((p) => p.id === 'mod-mohawk')).toBe(true)
+    setModPacks([])
+    expect(partsBySlot('hair').some((p) => p.id === 'mod-mohawk')).toBe(false)
+    // 사라진 모드 파츠를 쓰던 설정은 폴백된다
+    expect(getPart('hair', 'mod-mohawk').id).toBe(partsBySlot('hair')[0].id)
   })
 })
