@@ -233,6 +233,10 @@ const net = new NetClient({
   },
   onEmote(id, sym) {
     peerEmotes.set(id, { text: sym, timer: 1.8 })
+    // ★ = 친구가 희귀 기념품을 발견 — 내 화면에도 소식이 남는다 (수집 루프의 소셜 연결)
+    if (sym === '★') {
+      pushLog('알림', `${peers.peers.get(id)?.name ?? '?'} 님이 희귀한 보물을 발견했어요!`)
+    }
     // 근처 친구가 인사 기호를 보내면 감지해서 화답하러 간다 (대화하듯 주고받기)
     if (GREETING_SYMS.has(sym)) {
       const peer = peers.peers.get(id)
@@ -959,7 +963,8 @@ function handleCharEvents(dt: number) {
       const found = rollFind(album, Math.random, Date.now())
       if (found) {
         pickupFx = { def: found, timer: PICKUP_TIME }
-        char.messages.push('!')
+        // 희귀품이면 ★ 이모트 — 방에 있으면 기존 이모트 중계로 친구 화면에도 뜬다
+        char.messages.push(found.rarity === 'rare' ? '★' : '!')
         pushLog('발견', `${found.name}을(를) 주웠어요!`)
         saveAlbumNow()
         if (albumOpen) buildAlbum()
