@@ -118,3 +118,34 @@ jobs:
               그래도 "손상되었습니다"가 뜨면 터미널에서:
               `xattr -cr "/Applications/Desktop Companion.app"` 후 다시 열기.
           files: artifacts/**/*
+
+  # 새 빌드가 올라가면 이전 dev-build 릴리스/태그를 정리해 항상 최신 하나만 남긴다
+  # (릴리스 페이지에 구버전이 쌓여 어떤 걸 받아야 할지 헷갈리는 문제 방지)
+  cleanup-old-builds:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const current = `dev-build-${context.runNumber}`
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            })
+            for (const rel of releases) {
+              if (!rel.tag_name.startsWith('dev-build-') || rel.tag_name === current) continue
+              console.log(`deleting old release ${rel.tag_name}`)
+              await github.rest.repos.deleteRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: rel.id,
+              })
+              await github.rest.git
+                .deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `tags/${rel.tag_name}`,
+                })
+                .catch(() => {}) // 태그가 이미 없으면 무시
+            }
