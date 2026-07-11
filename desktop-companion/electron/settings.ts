@@ -43,6 +43,10 @@ export interface AppSettings {
   playerName: string
   /** relay 서버 주소 */
   serverUrl: string
+  /** 매시 정각에 캐릭터가 시각을 알려줌 (무음 — 픽셀 토스트) */
+  hourlyChime: boolean
+  /** 첫 실행 온보딩(옷장 자동 열기 + 안내)을 이미 마쳤는가 */
+  onboarded: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -63,6 +67,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   playerName: '친구',
   serverUrl: 'ws://127.0.0.1:8787',
+  hourlyChime: false,
+  onboarded: false,
 }
 
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json')

@@ -225,6 +225,105 @@
         background: #5b8bd9;
         color: #fff;
       }
+      /* 할일 목록 — 옷장과 같은 픽셀 스타일 */
+      #todo {
+        display: none;
+        position: absolute;
+        min-width: 220px;
+        max-width: 260px;
+        background: #1d1f2b;
+        border: 3px solid #454a66;
+        box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        font-weight: bold;
+        color: #e8e9f5;
+        padding: 8px;
+        image-rendering: pixelated;
+      }
+      #todo .w-title {
+        font-size: 13px;
+        margin-bottom: 6px;
+        color: #aab0cc;
+      }
+      #todo .t-list {
+        max-height: 180px;
+        overflow-y: auto;
+        margin-bottom: 6px;
+      }
+      #todo .t-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 4px;
+      }
+      #todo .t-check {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        box-sizing: border-box;
+        background: #10121b;
+        border: 2px solid #454a66;
+        color: #7ec46a;
+        font-size: 11px;
+        line-height: 12px;
+        text-align: center;
+        cursor: pointer;
+        padding: 0;
+        font-family: inherit;
+        font-weight: bold;
+      }
+      #todo .t-check:hover {
+        border-color: #7ec46a;
+      }
+      #todo .t-text {
+        flex: 1;
+        font-weight: normal;
+        font-size: 12px;
+        word-break: break-all;
+      }
+      #todo .t-text.done {
+        color: #666d8c;
+        text-decoration: line-through;
+      }
+      #todo .t-del {
+        background: none;
+        border: none;
+        color: #666d8c;
+        font-family: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        padding: 0 2px;
+      }
+      #todo .t-del:hover {
+        color: #ff9a9a;
+      }
+      #todo .t-close {
+        text-align: center;
+        padding: 5px;
+        cursor: pointer;
+      }
+      #todo .t-close:hover {
+        background: #5b8bd9;
+        color: #fff;
+      }
+      /* 픽셀 토스트 — 정각 알림/집중 타이머 종료 등 무음 알림 */
+      .toast {
+        position: absolute;
+        transform: translate(-50%, -100%);
+        max-width: 240px;
+        background: #1d1f2b;
+        color: #ffd76a;
+        border: 3px solid #ffd76a;
+        box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.4);
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        font-weight: bold;
+        padding: 6px 10px;
+        pointer-events: none;
+        image-rendering: pixelated;
+        transition: opacity 0.5s;
+      }
       /* 친구들/기록 패널 — 옷장과 같은 픽셀 스타일 */
       #mp,
       #history {
@@ -435,6 +534,7 @@
     <div id="menu"></div>
     <div id="wardrobe"></div>
     <div id="album"></div>
+    <div id="todo"></div>
     <div id="mp"></div>
     <div id="history"></div>
     <div id="chat"><input type="text" maxlength="200" placeholder="메시지 입력 후 Enter" /></div>

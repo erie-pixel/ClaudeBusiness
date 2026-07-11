@@ -142,6 +142,7 @@ const world = {
 const char = new Character(canvas.width / 2, canvas.height * 0.7)
 
 // 트레이/설정 반영 (시작 시 + 변경 시)
+let hourlyChime = false
 bridge.onSettings((s) => {
   applyScale(s.scale)
   char.applyActivity(s.activity)
@@ -151,6 +152,7 @@ bridge.onSettings((s) => {
   applyLook(s.look)
   playerName = s.playerName
   serverUrl = s.serverUrl
+  hourlyChime = s.hourlyChime
 })
 
 // ---------- 멀티플레이 (Phase 3) ----------
@@ -351,6 +353,7 @@ let interactive = false
 let menuOpen = false
 let wardrobeOpen = false
 let albumOpen = false
+let todoOpen = false
 let mpOpen = false
 let historyOpen = false
 let chatOpen = false
@@ -380,6 +383,7 @@ function syncInteractive(cursor: { x: number; y: number }) {
     menuOpen ||
     wardrobeOpen ||
     albumOpen ||
+    todoOpen ||
     mpOpen ||
     historyOpen ||
     chatOpen ||
@@ -528,6 +532,25 @@ function buildMenu() {
       },
     },
     'sep',
+    ...(focus
+      ? [
+          {
+            label: `집중 그만하기 (남은 ${Math.ceil(focus.remain / 60)}분)`,
+            action: () => stopFocus(false),
+          },
+        ]
+      : [
+          { label: '집중 타이머 25분', action: () => startFocus(25) },
+          { label: '집중 타이머 50분', action: () => startFocus(50) },
+        ]),
+    {
+      label: (() => {
+        const remaining = todos.filter((t) => !t.done).length
+        return remaining > 0 ? `할 일 목록 (${remaining})…` : '할 일 목록…'
+      })(),
+      action: () => openTodo(),
+    },
+    'sep',
     { label: '옷장 열기…', action: () => openWardrobe() },
     { label: `앨범 보기 (${foundKinds(album)}/${MEMENTOS.length})…`, action: () => openAlbum() },
     { label: roomCode ? `친구들 (${peers.peers.size + 1}명 접속)…` : '친구들…', action: () => openMp() },
@@ -654,7 +677,7 @@ window.addEventListener('click', (e) => {
   // 그리면(innerHTML 교체) 이 핸들러 시점에는 target이 이미 DOM에서 떨어져
   // contains()가 false가 되어 옷장이 클릭할 때마다 닫혀버린다.
   const path = e.composedPath()
-  if (path.includes(menu) || path.includes(wardrobe) || path.includes(albumPanel) || path.includes(mp) || path.includes(history) || path.includes(chatWrap) || path.includes(peekReq)) return
+  if (path.includes(menu) || path.includes(wardrobe) || path.includes(albumPanel) || path.includes(todoPanel) || path.includes(mp) || path.includes(history) || path.includes(chatWrap) || path.includes(peekReq)) return
   if (menuOpen) {
     closeMenu()
     return
@@ -665,6 +688,10 @@ window.addEventListener('click', (e) => {
   }
   if (albumOpen) {
     closeAlbum()
+    return
+  }
+  if (todoOpen) {
+    closeTodo()
     return
   }
   if (mpOpen) {
@@ -976,6 +1003,208 @@ function drawPickup() {
     size,
   )
   ctx.restore()
+}
+
+// ---------- 픽셀 토스트 (무음 알림 — 정각/집중 타이머 종료 등) ----------
+// 이 게임에는 사운드가 없다는 원칙: 알림은 전부 캐릭터 곁 시각 연출로만.
+
+function showToast(text: string, ms = 4200) {
+  const node = el('div', 'toast', text)
+  node.style.left = `${Math.min(Math.max(120, char.x), canvas.width - 130)}px`
+  node.style.top = `${Math.max(48, char.y - H - 34)}px`
+  document.body.appendChild(node)
+  setTimeout(() => {
+    node.style.opacity = '0'
+  }, ms - 500)
+  setTimeout(() => node.remove(), ms)
+}
+
+// ---------- 생산성 보조: 집중 타이머 (뽀모도로) ----------
+// 타이머는 FSM과 독립 — 캐릭터는 평소처럼 살고, 시작/종료 순간에만 반응한다.
+// 남은 시간은 캐릭터 머리 위 작은 칩으로 표시 (한눈에 보이는 무음 타이머).
+
+let focus: { remain: number; total: number } | null = null
+
+function startFocus(minutes: number) {
+  focus = { remain: minutes * 60, total: minutes * 60 }
+  char.messages.push('!')
+  char.emoteTimer = 1.6
+  showToast(`집중 시작 — ${minutes}분!`)
+}
+
+function stopFocus(finished: boolean) {
+  focus = null
+  if (finished) {
+    char.messages.push('♪')
+    char.emoteTimer = 1.6
+    showToast('집중 끝 — 잠깐 쉬어요!')
+  }
+}
+
+function tickFocus(dt: number) {
+  if (!focus) return
+  focus.remain -= dt
+  if (focus.remain <= 0) stopFocus(true)
+}
+
+/** 집중 중 캐릭터 머리 위 남은 시간 칩 */
+function drawFocusChip() {
+  if (!focus) return
+  const m = Math.floor(focus.remain / 60)
+  const s = Math.floor(focus.remain % 60)
+  const text = `${m}:${String(s).padStart(2, '0')}`
+  const x = Math.round(char.x)
+  const y = Math.round(char.y - H - 10)
+  ctx.save()
+  ctx.font = 'bold 11px monospace'
+  ctx.textAlign = 'center'
+  const w = ctx.measureText(text).width + 10
+  ctx.fillStyle = 'rgba(29,31,43,0.92)'
+  ctx.fillRect(x - w / 2, y - 12, w, 15)
+  ctx.strokeStyle = '#ffd76a'
+  ctx.lineWidth = 1
+  ctx.strokeRect(x - w / 2 + 0.5, y - 11.5, w - 1, 14)
+  ctx.fillStyle = '#ffd76a'
+  ctx.fillText(text, x, y)
+  ctx.restore()
+}
+
+// ---------- 생산성 보조: 정각 알림 (트레이에서 켜고 끔, 무음) ----------
+
+let lastChimeHour = new Date().getHours()
+
+function tickHourlyChime() {
+  const hour = new Date().getHours()
+  if (hour === lastChimeHour) return
+  lastChimeHour = hour
+  if (!hourlyChime) return
+  const display = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour
+  showToast(`${hour < 12 ? '오전' : '오후'} ${display}시예요`)
+  char.messages.push('!')
+}
+
+// ---------- 생산성 보조: 할일 목록 ----------
+
+const todoPanel = document.getElementById('todo') as HTMLDivElement
+
+interface TodoItem {
+  id: number
+  text: string
+  done: boolean
+}
+
+let todos: TodoItem[] = []
+let todoSeq = 1
+
+bridge.onTodos((data) => {
+  todos = []
+  if (Array.isArray(data)) {
+    for (const raw of data) {
+      if (typeof raw !== 'object' || raw === null) continue
+      const t = raw as Partial<TodoItem>
+      if (typeof t.text !== 'string' || !t.text) continue
+      todos.push({ id: todoSeq++, text: t.text.slice(0, 80), done: t.done === true })
+    }
+  }
+  if (todoOpen) buildTodo()
+})
+
+function saveTodosNow() {
+  bridge.saveTodos(todos.map((t) => ({ text: t.text, done: t.done })))
+}
+
+function buildTodo() {
+  todoPanel.innerHTML = ''
+  const remaining = todos.filter((t) => !t.done).length
+  todoPanel.appendChild(el('div', 'w-title', remaining > 0 ? `할 일 (${remaining}개 남음)` : '할 일'))
+
+  const list = el('div', 't-list')
+  for (const item of todos) {
+    const row = el('div', 't-row')
+    const check = el('button', 't-check', item.done ? '✓' : '')
+    check.addEventListener('click', () => {
+      item.done = !item.done
+      if (item.done) {
+        // 완료 순간 — 캐릭터가 같이 기뻐한다
+        char.messages.push('♪')
+        char.emoteTimer = 1.6
+        album.journal.todosDone++
+        saveAlbumNow()
+      }
+      saveTodosNow()
+      buildTodo()
+    })
+    row.appendChild(check)
+    row.appendChild(el('span', 't-text' + (item.done ? ' done' : ''), item.text))
+    const del = el('button', 't-del', '×')
+    del.addEventListener('click', () => {
+      todos = todos.filter((t) => t.id !== item.id)
+      saveTodosNow()
+      buildTodo()
+    })
+    row.appendChild(del)
+    list.appendChild(row)
+  }
+  if (todos.length === 0) list.appendChild(el('div', 'w-note', '아직 할 일이 없어요'))
+  todoPanel.appendChild(list)
+
+  const addRow = el('div', 'w-row')
+  const input = document.createElement('input')
+  input.className = 'w-input'
+  input.maxLength = 80
+  input.placeholder = '할 일 입력 후 Enter'
+  const add = () => {
+    const text = input.value.trim()
+    if (!text) return
+    todos.push({ id: todoSeq++, text, done: false })
+    saveTodosNow()
+    buildTodo()
+    // 다시 그려진 패널의 입력창에 포커스 유지
+    const next = todoPanel.querySelector('input')
+    if (next) (next as HTMLInputElement).focus()
+  }
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') add()
+    e.stopPropagation()
+  })
+  addRow.appendChild(input)
+  const addBtn = el('button', 'w-btn', '추가')
+  addBtn.addEventListener('click', add)
+  addRow.appendChild(addBtn)
+  todoPanel.appendChild(addRow)
+
+  if (todos.some((t) => t.done)) {
+    const clear = el('div', 'item t-close', '완료한 항목 지우기')
+    clear.addEventListener('click', () => {
+      todos = todos.filter((t) => !t.done)
+      saveTodosNow()
+      buildTodo()
+    })
+    todoPanel.appendChild(clear)
+  }
+
+  const close = el('div', 'item t-close', '닫기')
+  close.addEventListener('click', closeTodo)
+  todoPanel.appendChild(close)
+}
+
+function openTodo() {
+  buildTodo()
+  todoOpen = true
+  todoPanel.style.display = 'block'
+  todoPanel.style.left = `${Math.min(Math.max(8, char.x - 110), canvas.width - 260)}px`
+  todoPanel.style.top = `${Math.min(Math.max(8, char.y - H - 220), canvas.height - 300)}px`
+  bridge.setInteractive(true)
+  interactive = true
+  const input = todoPanel.querySelector('input')
+  if (input) (input as HTMLInputElement).focus()
+}
+
+function closeTodo() {
+  if (!todoOpen) return
+  todoOpen = false
+  todoPanel.style.display = 'none'
+  if (world.cursor) syncInteractive(world.cursor)
 }
 
 // ---------- 멀티플레이 UI: 친구들 패널 / 채팅 / 기록 / 말풍선 ----------
@@ -1822,6 +2051,7 @@ function draw() {
   drawEmote()
   drawPeerEmotes(dtForDraw)
   drawPickup()
+  drawFocusChip()
 
   // 화면 공유 중 상시 표시 — 몰래 공유되는 일이 없도록 (프라이버시 원칙)
   if (shares.size > 0) {
@@ -1866,6 +2096,8 @@ function loop(now: number) {
   char.update(dt, world)
   updateEmote(dt)
   handleCharEvents(dt)
+  tickFocus(dt)
+  tickHourlyChime()
 
   // 멀티플레이: 피어 보간, 상태 전송, 말풍선 위치, 다가가서 인사
   tickReconnect(dt)

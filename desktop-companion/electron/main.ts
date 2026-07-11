@@ -4,6 +4,7 @@ import * as os from 'node:os'
 import { startFullscreenWatcher, stopFullscreenWatcher } from './fullscreen-watcher'
 import { loadSettings, saveSettings, type AppSettings } from './settings'
 import { loadAlbum, saveAlbum } from './album-store'
+import { loadTodos, saveTodos } from './todo-store'
 import { startRelay, type RelayHandle } from '../server/relay.mjs'
 
 // "방 만들기" 시 앱에 내장된 relay 서버 — 별도 cmd/서버 실행이 필요 없다
@@ -41,6 +42,8 @@ let settings: AppSettings = {
   },
   playerName: '친구',
   serverUrl: 'ws://127.0.0.1:8787',
+  hourlyChime: false,
+  onboarded: false,
 }
 
 function pushSettings() {
@@ -52,6 +55,8 @@ function pushSettings() {
     look: settings.look,
     playerName: settings.playerName,
     serverUrl: settings.serverUrl,
+    hourlyChime: settings.hourlyChime,
+    onboarded: settings.onboarded,
   })
 }
 
@@ -136,8 +141,9 @@ function createWindow() {
   win.once('ready-to-show', () => win?.showInactive())
   win.webContents.on('did-finish-load', () => {
     pushSettings()
-    // 수집 앨범(함께한 날들) — 저장된 내용을 렌더러에 전달 (없으면 null)
+    // 수집 앨범(함께한 날들)·할일 목록 — 저장된 내용을 렌더러에 전달 (없으면 null)
     win?.webContents.send('album', loadAlbum())
+    win?.webContents.send('todos', loadTodos())
   })
   // 안전망: transparent 창은 환경에 따라 ready-to-show가 오지 않을 수 있다
   // (그러면 캐릭터가 영영 표시되지 않음) — 1.5초 후에도 안 보이면 강제 표시
@@ -237,6 +243,12 @@ function rebuildTrayMenu() {
           label: `모니터 ${i + 1} (${d.size.width}x${d.size.height})${d.id === currentDisplay().id ? ' ✓' : ''}`,
           click: () => moveToDisplay(d.id),
         })),
+      },
+      {
+        label: '정각 알림 (매시 정각에 시각 표시)',
+        type: 'checkbox',
+        checked: settings.hourlyChime,
+        click: () => updateSettings({ hourlyChime: !settings.hourlyChime }),
       },
       {
         label: '부팅 시 자동 시작',
@@ -343,6 +355,14 @@ ipcMain.on('save-look', (_e, look: AppSettings['look']) => {
 
 ipcMain.on('save-album', (_e, data: unknown) => {
   saveAlbum(data)
+})
+
+ipcMain.on('save-todos', (_e, data: unknown) => {
+  saveTodos(data)
+})
+
+ipcMain.on('save-onboarded', () => {
+  updateSettings({ onboarded: true })
 })
 
 ipcMain.on('save-mp', (_e, mp: { playerName: string; serverUrl: string }) => {
