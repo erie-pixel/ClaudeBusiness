@@ -143,6 +143,7 @@ const char = new Character(canvas.width / 2, canvas.height * 0.7)
 
 // 트레이/설정 반영 (시작 시 + 변경 시)
 let hourlyChime = false
+let onboardingStarted = false
 bridge.onSettings((s) => {
   applyScale(s.scale)
   char.applyActivity(s.activity)
@@ -153,6 +154,22 @@ bridge.onSettings((s) => {
   playerName = s.playerName
   serverUrl = s.serverUrl
   hourlyChime = s.hourlyChime
+
+  // 첫 실행 온보딩 — 캐릭터가 인사하고 옷장을 열어 꾸미기부터 안내한다.
+  // (기획서 §5 Phase 6 "첫 실행 캐릭터 메이커"의 경량판)
+  if (!s.onboarded && !onboardingStarted) {
+    onboardingStarted = true
+    bridge.saveOnboarded() // 다음 실행부터는 안 뜸 (지금 세션은 계속 진행)
+    setTimeout(() => {
+      char.messages.push('!')
+      char.emoteTimer = 1.6
+      showToast('안녕하세요! 이제 여기 살아요', 5000)
+    }, 1200)
+    setTimeout(() => {
+      showToast('먼저 옷장에서 꾸며 주세요 — 언제든 우클릭으로 메뉴를 열 수 있어요', 7000)
+      openWardrobe()
+    }, 4500)
+  }
 })
 
 // ---------- 멀티플레이 (Phase 3) ----------
