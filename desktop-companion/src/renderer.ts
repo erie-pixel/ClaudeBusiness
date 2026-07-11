@@ -490,7 +490,20 @@ bridge.onActiveWindow((rect) => {
 
 window.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return
-  if ((menuOpen && menu.contains(e.target as Node)) || wardrobe.contains(e.target as Node)) return
+  // 패널 내부에서 시작된 mousedown은 UI 조작(또는 패널 드래그) — 캐릭터/소파 집기와 분리
+  const t = e.target as Node
+  if (
+    menu.contains(t) ||
+    wardrobe.contains(t) ||
+    albumPanel.contains(t) ||
+    todoPanel.contains(t) ||
+    mp.contains(t) ||
+    history.contains(t) ||
+    chatWrap.contains(t) ||
+    peekReq.contains(t)
+  ) {
+    return
+  }
   if (overCharacter(e.clientX, e.clientY)) {
     closeMenu()
     pendingGrab = { x: e.clientX, y: e.clientY }
@@ -2075,6 +2088,35 @@ function draw() {
     ctx.fillText(live ? 'LIVE' : '공유중', char.x - W / 2 - 2, char.y - H + 20)
     ctx.restore()
   }
+}
+
+// ---------- 패널 드래그 이동 ----------
+// 모든 픽셀 패널(옷장/앨범/할일/친구들/기록/채팅/승인)은 빈 영역(제목·배경)을
+// 잡고 끌어 원하는 자리에 둘 수 있다. 버튼/입력/목록 같은 조작 요소 위에서는
+// 드래그가 시작되지 않는다.
+
+function makeDraggable(panel: HTMLElement) {
+  let drag: { dx: number; dy: number } | null = null
+  panel.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return
+    const target = e.target as HTMLElement
+    if (target.closest('button, input, .item, .swatch, .a-cell, .w-addr, .h-list, .t-list')) return
+    drag = { dx: e.clientX - panel.offsetLeft, dy: e.clientY - panel.offsetTop }
+    e.preventDefault()
+  })
+  window.addEventListener('mousemove', (e) => {
+    if (!drag) return
+    // 최소 40px은 화면 안에 남겨 패널을 잃어버리지 않게
+    panel.style.left = `${Math.min(Math.max(40 - panel.offsetWidth, e.clientX - drag.dx), canvas.width - 40)}px`
+    panel.style.top = `${Math.min(Math.max(0, e.clientY - drag.dy), canvas.height - 30)}px`
+  })
+  window.addEventListener('mouseup', () => {
+    drag = null
+  })
+}
+
+for (const panel of [wardrobe, albumPanel, todoPanel, mp, history, chatWrap, peekReq]) {
+  makeDraggable(panel)
 }
 
 let dtForDraw = 0
