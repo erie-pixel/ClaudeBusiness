@@ -124,9 +124,40 @@ export function startRelay({ port = 8787 } = {}) {
           break
         }
         case 'state': {
-          // 행동 intent — 정규화 좌표 + 포즈. 수신 측이 자기 화면에 맞게 재해석
-          me.lastState = { nx: msg.nx, ny: msg.ny, pose: msg.pose, facing: msg.facing }
+          // 행동 intent — 정규화 좌표 + 포즈. 수신 측이 자기 화면에 맞게 재해석.
+          // inRoom = 캐릭터가 엣지패널 방(집)에 들어가 있음 → 상대 화면에서는
+          // 바탕화면 대신 상대의 방 패널 안에 표시된다.
+          me.lastState = {
+            nx: msg.nx,
+            ny: msg.ny,
+            pose: msg.pose,
+            facing: msg.facing,
+            inRoom: msg.inRoom === true,
+          }
           toPeers(id, { t: 'state', id, ...me.lastState })
+          break
+        }
+        // 방 벽면 그림판 — 획(세그먼트 묶음)을 같은 방 전원에게 중계.
+        // 서버는 내용을 저장하지 않는다 (라이브 화이트보드, 도배 방지 상한만)
+        case 'draw': {
+          const now = Date.now()
+          me.drawTimes = me.drawTimes.filter((t) => now - t < 1000)
+          if (me.drawTimes.length >= 30) return // 초당 30묶음 상한
+          me.drawTimes.push(now)
+          const segs = (Array.isArray(msg.segs) ? msg.segs : [])
+            .slice(0, 64)
+            .filter(
+              (s) =>
+                Array.isArray(s) &&
+                s.length === 5 &&
+                s.every((v) => typeof v === 'number' && Number.isFinite(v)),
+            )
+          if (segs.length === 0) return
+          toPeers(id, { t: 'draw', id, segs })
+          break
+        }
+        case 'draw-clear': {
+          toPeers(id, { t: 'draw-clear', id })
           break
         }
         case 'emote': {

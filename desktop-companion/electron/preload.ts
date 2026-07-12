@@ -38,6 +38,9 @@ export interface CompanionBridge {
   onAlbum(cb: (data: unknown) => void): void
   onTodos(cb: (data: unknown) => void): void
   onModPacks(cb: (packs: unknown[]) => void): void
+  onRoom(cb: (data: unknown) => void): void
+  saveRoom(data: unknown): void
+  openLink(url: string): void
   openModsFolder(): void
   onOpenChat(cb: () => void): void
   setInteractive(interactive: boolean): void
@@ -76,6 +79,11 @@ const bridge: CompanionBridge = {
   onModPacks: (cb) => {
     ipcRenderer.on('mod-packs', (_e, packs) => cb(packs))
   },
+  onRoom: (cb) => {
+    ipcRenderer.on('room', (_e, data) => cb(data))
+  },
+  saveRoom: (data) => ipcRenderer.send('save-room', data),
+  openLink: (url) => ipcRenderer.send('open-link', url),
   openModsFolder: () => ipcRenderer.send('open-mods-folder'),
   onOpenChat: (cb) => {
     ipcRenderer.on('open-chat', () => cb())

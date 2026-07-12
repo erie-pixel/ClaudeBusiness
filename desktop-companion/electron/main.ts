@@ -5,6 +5,7 @@ import { startFullscreenWatcher, stopFullscreenWatcher } from './fullscreen-watc
 import { loadSettings, saveSettings, type AppSettings } from './settings'
 import { loadAlbum, saveAlbum } from './album-store'
 import { loadTodos, saveTodos } from './todo-store'
+import { loadRoom, saveRoom } from './room-store'
 import { modsDir, scanModPacks, watchModPacks } from './mod-loader'
 import { startRelay, type RelayHandle } from '../server/relay.mjs'
 
@@ -150,6 +151,7 @@ function createWindow() {
     // 수집 앨범(함께한 날들)·할일 목록 — 저장된 내용을 렌더러에 전달 (없으면 null)
     win?.webContents.send('album', loadAlbum())
     win?.webContents.send('todos', loadTodos())
+    win?.webContents.send('room', loadRoom())
     // 모드 파츠 팩 — 스캔 결과를 전달하고, mods/ 폴더 변경 시 핫리로드
     win?.webContents.send('mod-packs', scanModPacks())
   })
@@ -372,6 +374,15 @@ ipcMain.on('save-album', (_e, data: unknown) => {
 
 ipcMain.on('save-todos', (_e, data: unknown) => {
   saveTodos(data)
+})
+
+ipcMain.on('save-room', (_e, data: unknown) => {
+  saveRoom(data)
+})
+
+// 방 링크 보드 — http/https URL만 기본 브라우저로 연다 (file:// 등 차단)
+ipcMain.on('open-link', (_e, url: unknown) => {
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url)
 })
 
 ipcMain.on('save-onboarded', () => {

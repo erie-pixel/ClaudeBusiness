@@ -206,6 +206,145 @@
         background: #5b8bd9;
         color: #fff;
       }
+      /* 엣지패널 방 — 화면 가장자리 핸들 + 슬라이드 방 창 */
+      #edgehandle {
+        position: absolute;
+        width: 12px;
+        height: 72px;
+        background: #2b2e40;
+        border: 2px solid #454a66;
+        opacity: 0.55;
+        cursor: pointer;
+        z-index: 5;
+      }
+      #edgehandle:hover {
+        opacity: 1;
+        background: #454a66;
+      }
+      #edgehandle .grip {
+        position: absolute;
+        left: 3px;
+        top: 14px;
+        width: 2px;
+        height: 44px;
+        background: #8a90ad;
+        box-shadow: 4px 0 0 #8a90ad;
+      }
+      #room {
+        display: none;
+        position: absolute;
+        width: 264px;
+        background: #1d1f2b;
+        border: 3px solid #454a66;
+        box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        font-weight: bold;
+        color: #e8e9f5;
+        padding: 8px;
+        image-rendering: pixelated;
+        z-index: 6;
+      }
+      #room .w-title {
+        font-size: 13px;
+        margin-bottom: 6px;
+        color: #aab0cc;
+      }
+      /* 방 안 풍경 — 집에 있는 캐릭터들이 모여 앉는 곳 */
+      #room .r-scene {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+        min-height: 64px;
+        background: #2b2436;
+        border: 2px solid #454a66;
+        border-bottom: 6px solid #57405a;
+        padding: 6px 10px 2px;
+        margin-bottom: 6px;
+        overflow-x: auto;
+      }
+      #room .r-resident {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+      }
+      #room .r-resident canvas {
+        image-rendering: pixelated;
+      }
+      #room .r-resident span {
+        font-size: 9px;
+        color: #aab0cc;
+        max-width: 52px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #room .r-empty {
+        color: #666d8c;
+        font-size: 11px;
+        font-weight: normal;
+        align-self: center;
+        margin: auto;
+      }
+      /* 벽면 그림판 */
+      #room .r-board {
+        display: block;
+        background: #fdfdf6;
+        border: 3px solid #8a5a3b;
+        cursor: crosshair;
+        touch-action: none;
+      }
+      #room .r-tools {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin: 5px 0 7px;
+      }
+      #room .r-color {
+        width: 16px;
+        height: 16px;
+        border: 2px solid #454a66;
+        cursor: pointer;
+        padding: 0;
+      }
+      #room .r-color.active {
+        border-color: #fff;
+      }
+      #room .r-links {
+        max-height: 110px;
+        overflow-y: auto;
+        margin-bottom: 5px;
+      }
+      #room .r-link {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-bottom: 3px;
+      }
+      #room .r-link a {
+        flex: 1;
+        color: #9ad0ff;
+        cursor: pointer;
+        font-weight: normal;
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-decoration: underline;
+      }
+      #room .r-link a:hover {
+        color: #cfe7ff;
+      }
+      #room .r-close {
+        text-align: center;
+        padding: 5px;
+        cursor: pointer;
+      }
+      #room .r-close:hover {
+        background: #5b8bd9;
+        color: #fff;
+      }
       /* 할일 목록 — 옷장과 같은 픽셀 스타일 */
       #todo {
         display: none;
@@ -516,6 +655,8 @@
     <div id="wardrobe"></div>
     <div id="album"></div>
     <div id="todo"></div>
+    <div id="edgehandle"><div class="grip"></div></div>
+    <div id="room"></div>
     <div id="mp"></div>
     <div id="history"></div>
     <div id="chat"><input type="text" maxlength="200" placeholder="메시지 입력 후 Enter" /></div>

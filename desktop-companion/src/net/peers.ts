@@ -24,6 +24,8 @@ export interface Peer {
   status: string
   /** 프레즌스 (이름표 옆 점 색) */
   presence: PresenceMode
+  /** 방(집)에 들어가 있음 — 바탕화면 대신 방 패널에 표시 */
+  inRoom: boolean
 }
 
 const LERP_RATE = 10 // 초당 목표 접근 비율 계수
@@ -50,6 +52,7 @@ export class PeerStore {
       hasState: false,
       status: '',
       presence: 'online',
+      inRoom: false,
     }
     peer.name = info.name
     peer.look = info.look
@@ -88,6 +91,7 @@ export class PeerStore {
     peer.ny = state.ny
     peer.pose = state.pose
     peer.facing = state.facing
+    peer.inRoom = state.inRoom === true
     if (snap) {
       peer.x = Number.NaN // tick에서 화면 크기로 스냅
     }
@@ -114,7 +118,7 @@ export class PeerStore {
   /** 주어진 지점에서 radius 안에 있는 피어 (근접 상호작용/클릭 판정) */
   near(x: number, y: number, radius: number): Peer | null {
     for (const peer of this.peers.values()) {
-      if (!peer.hasState) continue
+      if (!peer.hasState || peer.inRoom) continue // 방에 들어간 친구는 바탕화면에 없다
       if (Math.hypot(peer.x - x, peer.y - y) <= radius) return peer
     }
     return null

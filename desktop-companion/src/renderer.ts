@@ -48,6 +48,7 @@ window.addEventListener('resize', () => {
   canvas.width = window.innerWidth
   canvas.height = window.innerHeight
   ctx.imageSmoothingEnabled = false
+  positionEdgeHandle()
 })
 
 // ---------- 프레임 (Phase 2: 팔레트 스왑 커스터마이징) ----------
@@ -322,6 +323,13 @@ const net = new NetClient({
       }
     }
   },
+  onDraw(_id, segs) {
+    for (const s of segs) drawBoardSeg(s[0], s[1], s[2], s[3], s[4])
+  },
+  onDrawClear(id) {
+    clearBoard(false)
+    pushLog('알림', `${peers.peers.get(id)?.name ?? '?'} 님이 그림판을 지웠어요`)
+  },
   onPeek(type, from, name, watching, payload) {
     handlePeekSignal(type, from, name, watching, payload)
   },
@@ -407,8 +415,9 @@ function maybeSendState(dt: number) {
   const state: NetState = {
     nx: Math.round((char.x / canvas.width) * 1000) / 1000,
     ny: Math.round((char.y / canvas.height) * 1000) / 1000,
-    pose: char.pose,
+    pose: charHome ? 'sit' : char.pose,
     facing: char.facing,
+    inRoom: charHome,
   }
   const key = JSON.stringify(state)
   if (key === lastSentState) return
@@ -472,6 +481,7 @@ const DRAG_THRESHOLD = 8 // px — 이만큼 끌어야 '집기'로 인정
 
 /** 현재 프레임의 불투명 픽셀 위인지 per-pixel 검사 */
 function overCharacter(px: number, py: number): boolean {
+  if (charHome) return false // 방에 들어가 있으면 바탕화면에 없다
   const frame = currentFrame()
   const left = char.x - W / 2
   const top = char.y - H
@@ -489,6 +499,8 @@ function syncInteractive(cursor: { x: number; y: number }) {
     wardrobeOpen ||
     albumOpen ||
     todoOpen ||
+    roomOpen ||
+    overEdgeHandle(cursor.x, cursor.y) ||
     mpOpen ||
     historyOpen ||
     chatOpen ||
@@ -532,6 +544,8 @@ bridge.onCursor((pos) => {
     sofa.x = Math.max(0, Math.min(1 - r.w / canvas.width, sofa.x))
     sofa.y = Math.max(0, Math.min(1 - r.h / canvas.height, sofa.y))
   }
+  // 엣지 핸들 호버 → 방 열기 (삼성 엣지패널 방식)
+  if (!roomOpen && overEdgeHandle(pos.x, pos.y)) openRoom()
   if (roomCode) updatePeekHover(pos)
   syncInteractive(pos)
 })
@@ -555,6 +569,8 @@ window.addEventListener('mousedown', (e) => {
     wardrobe.contains(t) ||
     albumPanel.contains(t) ||
     todoPanel.contains(t) ||
+    roomPanel.contains(t) ||
+    edgeHandle.contains(t) ||
     mp.contains(t) ||
     history.contains(t) ||
     chatWrap.contains(t) ||
@@ -752,7 +768,7 @@ window.addEventListener('click', (e) => {
   // 그리면(innerHTML 교체) 이 핸들러 시점에는 target이 이미 DOM에서 떨어져
   // contains()가 false가 되어 옷장이 클릭할 때마다 닫혀버린다.
   const path = e.composedPath()
-  if (path.includes(menu) || path.includes(wardrobe) || path.includes(albumPanel) || path.includes(todoPanel) || path.includes(mp) || path.includes(history) || path.includes(chatWrap) || path.includes(peekReq)) return
+  if (path.includes(menu) || path.includes(wardrobe) || path.includes(albumPanel) || path.includes(todoPanel) || path.includes(roomPanel) || path.includes(edgeHandle) || path.includes(mp) || path.includes(history) || path.includes(chatWrap) || path.includes(peekReq)) return
   if (menuOpen) {
     closeMenu()
     return
@@ -1283,6 +1299,383 @@ function closeTodo() {
   todoOpen = false
   todoPanel.style.display = 'none'
   if (world.cursor) syncInteractive(world.cursor)
+}
+
+// ---------- 엣지패널 방 (집) ----------
+// 화면 가장자리(좌/우)의 핸들에 마우스를 올리면 슬라이드로 열리는 "내 방".
+// 캐릭터를 들여보내면 바탕화면을 돌아다니지 않고 방 안에 앉아 지내고,
+// 같은 멀티플레이 방 친구들 중 '집에 있는' 캐릭터도 함께 모여 보인다.
+// 벽면에는 공유 그림판(친구와 그림으로 소통)과 링크 보드(중요 문서 바로가기)가 있다.
+
+const edgeHandle = document.getElementById('edgehandle') as HTMLDivElement
+const roomPanel = document.getElementById('room') as HTMLDivElement
+
+interface RoomLink {
+  title: string
+  url: string
+}
+
+let roomSide: 'left' | 'right' = 'right'
+let roomOffset = 0.35 // 핸들 세로 위치 (화면 높이 대비 0~1)
+let roomLinks: RoomLink[] = []
+let charHome = false
+let roomOpen = false
+const HANDLE_H = 72
+const HANDLE_W = 12
+
+bridge.onRoom((raw) => {
+  if (typeof raw === 'object' && raw !== null) {
+    const r = raw as { side?: string; offset?: number; links?: unknown; charHome?: boolean }
+    roomSide = r.side === 'left' ? 'left' : 'right'
+    roomOffset = typeof r.offset === 'number' ? Math.min(0.92, Math.max(0, r.offset)) : 0.35
+    roomLinks = []
+    if (Array.isArray(r.links)) {
+      for (const l of r.links) {
+        const link = l as Partial<RoomLink>
+        if (typeof link.title === 'string' && typeof link.url === 'string' && /^https?:\/\//i.test(link.url)) {
+          roomLinks.push({ title: link.title.slice(0, 40), url: link.url.slice(0, 500) })
+        }
+      }
+    }
+    if (r.charHome === true && !charHome) enterHome()
+  }
+  positionEdgeHandle()
+})
+
+function saveRoomNow() {
+  bridge.saveRoom({ side: roomSide, offset: roomOffset, links: roomLinks, charHome })
+}
+
+function handleRect() {
+  const x = roomSide === 'right' ? canvas.width - HANDLE_W : 0
+  const y = Math.round(roomOffset * (canvas.height - HANDLE_H))
+  return { x, y, w: HANDLE_W, h: HANDLE_H }
+}
+
+function positionEdgeHandle() {
+  const r = handleRect()
+  edgeHandle.style.left = `${r.x}px`
+  edgeHandle.style.top = `${r.y}px`
+  if (roomOpen) positionRoomPanel()
+}
+
+function overEdgeHandle(px: number, py: number): boolean {
+  const r = handleRect()
+  return px >= r.x - 2 && px <= r.x + r.w + 2 && py >= r.y && py <= r.y + r.h
+}
+
+function positionRoomPanel() {
+  const r = handleRect()
+  const top = Math.min(Math.max(8, r.y - 40), canvas.height - roomPanel.offsetHeight - 8)
+  roomPanel.style.top = `${top}px`
+  if (roomSide === 'right') {
+    roomPanel.style.left = ''
+    roomPanel.style.right = `${HANDLE_W + 4}px`
+  } else {
+    roomPanel.style.right = ''
+    roomPanel.style.left = `${HANDLE_W + 4}px`
+  }
+}
+
+// ----- 캐릭터 들여보내기/내보내기 -----
+
+function enterHome() {
+  charHome = true
+  char.commandStay() // FSM 정지 — 방 안에서 조용히 지낸다
+  lastSentState = '' // inRoom 변화를 즉시 전송
+}
+
+function leaveHome() {
+  charHome = false
+  // 방 문(핸들) 앞에서 걸어 나온다
+  const r = handleRect()
+  char.x = roomSide === 'right' ? canvas.width - 70 : 70
+  char.y = Math.min(Math.max(world.bounds.minY, r.y + 60), world.bounds.maxY)
+  char.state = 'idle'
+  char.messages.push('!')
+  lastSentState = ''
+}
+
+// ----- 벽면 그림판 (공유 화이트보드) -----
+// 획은 정규화 좌표로 저장/전송 → 모두가 같은 비율의 보드를 본다.
+// 캔버스 요소는 한 번만 만들어 재사용 — 패널을 다시 그려도 그림이 유지된다.
+
+const BOARD_W = 234
+const BOARD_H = 130
+const BOARD_COLORS = ['#22242f', '#d95763', '#5b8bd9', '#5f9e54', '#e8c04a']
+const BOARD_BG = '#fdfdf6'
+const boardCanvas = document.createElement('canvas')
+boardCanvas.className = 'r-board'
+boardCanvas.width = BOARD_W
+boardCanvas.height = BOARD_H
+const boardCtx = boardCanvas.getContext('2d')!
+let boardColor = 0 // BOARD_COLORS 인덱스, BOARD_COLORS.length = 지우개
+let boardStroke: { x: number; y: number } | null = null
+let pendingSegs: number[][] = []
+let drawFlushAccum = 0
+
+function clearBoard(broadcast: boolean) {
+  boardCtx.fillStyle = BOARD_BG
+  boardCtx.fillRect(0, 0, BOARD_W, BOARD_H)
+  if (broadcast && roomCode && net.connected) net.sendDrawClear()
+}
+clearBoard(false)
+
+function drawBoardSeg(x0: number, y0: number, x1: number, y1: number, colorIdx: number) {
+  const eraser = colorIdx >= BOARD_COLORS.length || colorIdx < 0
+  boardCtx.strokeStyle = eraser ? BOARD_BG : BOARD_COLORS[colorIdx]
+  boardCtx.lineWidth = eraser ? 10 : 2
+  boardCtx.lineCap = 'round'
+  boardCtx.beginPath()
+  boardCtx.moveTo(x0 * BOARD_W, y0 * BOARD_H)
+  boardCtx.lineTo(x1 * BOARD_W, y1 * BOARD_H)
+  boardCtx.stroke()
+}
+
+function boardPos(e: MouseEvent) {
+  const rect = boardCanvas.getBoundingClientRect()
+  return {
+    x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
+    y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
+  }
+}
+
+boardCanvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return
+  boardStroke = boardPos(e)
+  e.stopPropagation() // 패널 드래그로 번지지 않게
+})
+window.addEventListener('mousemove', (e) => {
+  if (!boardStroke) return
+  const p = boardPos(e)
+  drawBoardSeg(boardStroke.x, boardStroke.y, p.x, p.y, boardColor)
+  if (pendingSegs.length < 512) {
+    pendingSegs.push([
+      Math.round(boardStroke.x * 1000) / 1000,
+      Math.round(boardStroke.y * 1000) / 1000,
+      Math.round(p.x * 1000) / 1000,
+      Math.round(p.y * 1000) / 1000,
+      boardColor,
+    ])
+  }
+  boardStroke = p
+})
+window.addEventListener('mouseup', () => {
+  boardStroke = null
+})
+
+/** 그린 획을 0.15초 간격으로 묶어 전송 (relay의 초당 상한 안쪽) */
+function flushBoard(dt: number) {
+  drawFlushAccum += dt
+  if (drawFlushAccum < 0.15) return
+  drawFlushAccum = 0
+  if (pendingSegs.length === 0) return
+  if (roomCode && net.connected) net.sendDraw(pendingSegs.splice(0, 64))
+  else pendingSegs.length = 0 // 혼자일 때는 로컬에만 그린다
+}
+
+// ----- 방 패널 UI -----
+
+function residentCanvas(lookOf: Look | null): HTMLCanvasElement {
+  const c = document.createElement('canvas')
+  c.width = SPRITE_W * 2
+  c.height = SPRITE_H * 2
+  const cc = c.getContext('2d')!
+  cc.imageSmoothingEnabled = false
+  const baked = lookOf === null ? frames : peerFrames(lookOf)
+  cc.drawImage(baked.sit.canvas, 0, 0, c.width, c.height)
+  return c
+}
+
+function fillRoomScene(scene: HTMLElement) {
+  scene.innerHTML = ''
+  const residents: Array<{ name: string; look: Look | null }> = []
+  if (charHome) residents.push({ name: `${playerName} (나)`, look: null })
+  for (const p of peers.peers.values()) {
+    if (p.inRoom) residents.push({ name: p.name, look: p.look })
+  }
+  if (residents.length === 0) {
+    scene.appendChild(el('div', 'r-empty', '아무도 없어요'))
+    return
+  }
+  for (const r of residents) {
+    const box = el('div', 'r-resident')
+    box.appendChild(residentCanvas(r.look))
+    box.appendChild(el('span', '', r.name))
+    scene.appendChild(box)
+  }
+}
+
+function buildRoom() {
+  roomPanel.innerHTML = ''
+  roomPanel.appendChild(el('div', 'w-title', '내 방'))
+
+  // 방 안 풍경 — 집에 있는 캐릭터들 (틱마다 부분 갱신되므로 별도 함수)
+  const scene = el('div', 'r-scene')
+  fillRoomScene(scene)
+  roomPanel.appendChild(scene)
+
+  const homeBtn = el('button', 'w-btn', charHome ? '캐릭터 내보내기' : '캐릭터 들여보내기')
+  homeBtn.style.width = '100%'
+  homeBtn.addEventListener('click', () => {
+    if (charHome) leaveHome()
+    else enterHome()
+    saveRoomNow()
+    buildRoom()
+  })
+  roomPanel.appendChild(homeBtn)
+
+  // 벽면 그림판
+  const boardTitle = el('div', 'w-title', '벽면 그림판')
+  boardTitle.style.marginTop = '8px'
+  roomPanel.appendChild(boardTitle)
+  roomPanel.appendChild(boardCanvas) // 기존 캔버스 재사용 — 그림 유지
+  const tools = el('div', 'r-tools')
+  BOARD_COLORS.forEach((color, idx) => {
+    const sw = el('button', 'r-color' + (boardColor === idx ? ' active' : ''))
+    sw.style.background = color
+    sw.addEventListener('click', () => {
+      boardColor = idx
+      buildRoom()
+    })
+    tools.appendChild(sw)
+  })
+  const eraser = el('button', 'r-color' + (boardColor === BOARD_COLORS.length ? ' active' : ''), 'E')
+  eraser.style.background = BOARD_BG
+  eraser.style.color = '#22242f'
+  eraser.style.fontSize = '9px'
+  eraser.addEventListener('click', () => {
+    boardColor = BOARD_COLORS.length
+    buildRoom()
+  })
+  tools.appendChild(eraser)
+  const clearBtn = el('button', 'w-btn', '지우기')
+  clearBtn.style.marginLeft = 'auto'
+  clearBtn.addEventListener('click', () => clearBoard(true))
+  tools.appendChild(clearBtn)
+  roomPanel.appendChild(tools)
+
+  // 링크 보드 — 중요 문서(노션 등) 바로가기
+  roomPanel.appendChild(el('div', 'w-title', '링크 보드'))
+  const linkList = el('div', 'r-links')
+  for (const link of roomLinks) {
+    const row = el('div', 'r-link')
+    const a = el('a', '', link.title)
+    a.title = link.url
+    a.addEventListener('click', () => bridge.openLink(link.url))
+    row.appendChild(a)
+    const del = el('button', 't-del', '×')
+    del.addEventListener('click', () => {
+      roomLinks = roomLinks.filter((l) => l !== link)
+      saveRoomNow()
+      buildRoom()
+    })
+    row.appendChild(del)
+    linkList.appendChild(row)
+  }
+  if (roomLinks.length === 0) linkList.appendChild(el('div', 'w-note', '자주 쓰는 문서 링크를 붙여두세요'))
+  roomPanel.appendChild(linkList)
+
+  const addRow = el('div', 'w-row')
+  const titleInput = document.createElement('input')
+  titleInput.className = 'w-input'
+  titleInput.maxLength = 40
+  titleInput.placeholder = '이름'
+  titleInput.style.flex = '0 0 70px'
+  const urlInput = document.createElement('input')
+  urlInput.className = 'w-input'
+  urlInput.placeholder = 'https://…'
+  const addBtn = el('button', 'w-btn', '+')
+  const addLink = () => {
+    const title = titleInput.value.trim()
+    const url = urlInput.value.trim()
+    if (!title || !/^https?:\/\//i.test(url)) return
+    roomLinks.push({ title: title.slice(0, 40), url: url.slice(0, 500) })
+    saveRoomNow()
+    buildRoom()
+  }
+  addBtn.addEventListener('click', addLink)
+  urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addLink()
+    e.stopPropagation()
+  })
+  addRow.appendChild(titleInput)
+  addRow.appendChild(urlInput)
+  addRow.appendChild(addBtn)
+  roomPanel.appendChild(addRow)
+
+  // 방 위치 (엣지패널 위치 조정 — 좌/우 전환은 버튼, 세로는 핸들 드래그)
+  const sideBtn = el('div', 'item r-close', roomSide === 'right' ? '방을 왼쪽 가장자리로' : '방을 오른쪽 가장자리로')
+  sideBtn.addEventListener('click', () => {
+    roomSide = roomSide === 'right' ? 'left' : 'right'
+    saveRoomNow()
+    positionEdgeHandle()
+    positionRoomPanel()
+    buildRoom()
+  })
+  roomPanel.appendChild(sideBtn)
+
+  const close = el('div', 'item r-close', '닫기')
+  close.addEventListener('click', closeRoom)
+  roomPanel.appendChild(close)
+}
+
+function openRoom() {
+  if (roomOpen) return
+  buildRoom()
+  roomOpen = true
+  roomPanel.style.display = 'block'
+  positionRoomPanel()
+  bridge.setInteractive(true)
+  interactive = true
+}
+
+function closeRoom() {
+  if (!roomOpen) return
+  roomOpen = false
+  roomPanel.style.display = 'none'
+  if (world.cursor) syncInteractive(world.cursor)
+}
+
+// 핸들 드래그 — 세로 위치 조정 (클릭만 하면 열기)
+let handleDrag: { startY: number; startOffset: number; moved: boolean } | null = null
+edgeHandle.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return
+  handleDrag = { startY: e.clientY, startOffset: roomOffset, moved: false }
+  e.preventDefault()
+  e.stopPropagation()
+})
+window.addEventListener('mousemove', (e) => {
+  if (!handleDrag) return
+  const dy = e.clientY - handleDrag.startY
+  if (Math.abs(dy) > 6) handleDrag.moved = true
+  if (handleDrag.moved) {
+    roomOffset = Math.min(0.92, Math.max(0, handleDrag.startOffset + dy / (canvas.height - HANDLE_H)))
+    positionEdgeHandle()
+  }
+})
+window.addEventListener('mouseup', () => {
+  if (!handleDrag) return
+  if (handleDrag.moved) saveRoomNow()
+  else openRoom() // 드래그 없이 클릭 → 열기
+  handleDrag = null
+})
+edgeHandle.addEventListener('mouseenter', () => {
+  if (!roomOpen) openRoom() // 삼성 엣지패널처럼 호버로도 열림
+})
+
+// 방이 열려 있는 동안 1초마다 방 풍경만 부분 갱신 (친구 입퇴실 반영 —
+// 전체를 다시 그리면 입력 중인 링크 텍스트가 날아가므로 풍경만 교체)
+let roomRefreshAccum = 0
+function tickRoom(dt: number) {
+  flushBoard(dt)
+  if (!roomOpen) return
+  roomRefreshAccum += dt
+  if (roomRefreshAccum >= 1) {
+    roomRefreshAccum = 0
+    const scene = roomPanel.querySelector('.r-scene')
+    if (scene) fillRoomScene(scene as HTMLElement)
+  }
 }
 
 // ---------- 멀티플레이 UI: 친구들 패널 / 채팅 / 기록 / 말풍선 ----------
@@ -1903,7 +2296,7 @@ async function handlePeekSignal(
 /** 커서가 어느 친구 캐릭터 스프라이트 위에 있는지 (바운딩 박스) */
 function peerAt(px: number, py: number): Peer | null {
   for (const peer of peers.peers.values()) {
-    if (!peer.hasState || Number.isNaN(peer.x)) continue
+    if (!peer.hasState || Number.isNaN(peer.x) || peer.inRoom) continue
     if (px >= peer.x - W / 2 && px <= peer.x + W / 2 && py >= peer.y - H && py <= peer.y) {
       return peer
     }
@@ -2076,6 +2469,7 @@ function frameForPeer(peer: Peer): BakedFrame {
 
 function drawPeer(peer: Peer) {
   if (!peer.hasState || Number.isNaN(peer.x)) return
+  if (peer.inRoom) return // 방에 들어간 친구는 방 패널 풍경에 나온다
   const frame = frameForPeer(peer)
   const top = peer.y - H
   ctx.save()
@@ -2129,6 +2523,14 @@ function draw() {
 
   // 친구 캐릭터들 (내 캐릭터보다 뒤에)
   for (const peer of peers.peers.values()) drawPeer(peer)
+  drawPeerEmotes(dtForDraw)
+
+  // 내 캐릭터가 방(집)에 들어가 있으면 바탕화면에는 그리지 않는다 —
+  // 방 패널 풍경에 나온다. 화면 공유 중 표시는 프라이버시 원칙상 항상 유지.
+  if (charHome) {
+    drawSharesIndicator(70, 26)
+    return
+  }
 
   const frame = currentFrame()
   const top = char.y - H
@@ -2174,25 +2576,27 @@ function draw() {
   }
 
   drawEmote()
-  drawPeerEmotes(dtForDraw)
   drawPickup()
   drawFocusChip()
+  drawSharesIndicator(char.x - W / 2 - 6, char.y - H + 4)
+}
 
-  // 화면 공유 중 상시 표시 — 몰래 공유되는 일이 없도록 (프라이버시 원칙)
-  if (shares.size > 0) {
-    const live = [...shares.values()].some((s) => s.track.enabled)
-    const blink = Math.floor(animTime * 2) % 2 === 0
-    ctx.save()
-    ctx.fillStyle = blink ? '#ff4d5e' : '#b32836'
-    ctx.beginPath()
-    ctx.arc(char.x - W / 2 - 6, char.y - H + 4, 4, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.font = 'bold 10px monospace'
-    ctx.textAlign = 'left'
-    ctx.fillStyle = '#ff8b96'
-    ctx.fillText(live ? 'LIVE' : '공유중', char.x - W / 2 - 2, char.y - H + 20)
-    ctx.restore()
-  }
+/** 화면 공유 중 상시 표시 — 몰래 공유되는 일이 없도록 (프라이버시 원칙).
+ * 평소에는 캐릭터 옆, 캐릭터가 방에 들어가 있으면 화면 구석에 고정 표시 */
+function drawSharesIndicator(x: number, y: number) {
+  if (shares.size === 0) return
+  const live = [...shares.values()].some((s) => s.track.enabled)
+  const blink = Math.floor(animTime * 2) % 2 === 0
+  ctx.save()
+  ctx.fillStyle = blink ? '#ff4d5e' : '#b32836'
+  ctx.beginPath()
+  ctx.arc(x, y, 4, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.font = 'bold 10px monospace'
+  ctx.textAlign = 'left'
+  ctx.fillStyle = '#ff8b96'
+  ctx.fillText(live ? 'LIVE' : '공유중', x + 4, y + 16)
+  ctx.restore()
 }
 
 // ---------- 패널 드래그 이동 ----------
@@ -2252,6 +2656,7 @@ function loop(now: number) {
   handleCharEvents(dt)
   tickFocus(dt)
   tickHourlyChime()
+  tickRoom(dt)
 
   // 멀티플레이: 피어 보간, 상태 전송, 말풍선 위치, 다가가서 인사
   tickReconnect(dt)

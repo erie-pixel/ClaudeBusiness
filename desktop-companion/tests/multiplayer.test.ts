@@ -117,6 +117,17 @@ describe('원격 캐릭터 보간 (PeerStore)', () => {
     expect(store.near(700, 700, 30)).toBeNull()
   })
 
+  it('방(집)에 들어간 피어는 near 판정에서 빠진다 (바탕화면에 없음)', () => {
+    const store = new PeerStore()
+    store.upsert(info('1'))
+    store.updateState('1', { nx: 0.5, ny: 0.5, pose: 'sit', facing: 1, inRoom: true })
+    store.tick(1 / 60, 1000, 1000)
+    expect(store.peers.get('1')!.inRoom).toBe(true)
+    expect(store.near(500, 500, 50)).toBeNull() // 자리에 있어도 집에 있으면 제외
+    store.updateState('1', { nx: 0.5, ny: 0.5, pose: 'idle', facing: 1, inRoom: false })
+    expect(store.near(500, 500, 50)).not.toBeNull() // 나오면 다시 보인다
+  })
+
   it('상태 메시지/프레즌스는 참여 시 초기값을 받고 이후 갱신된다 (SNS)', () => {
     const store = new PeerStore()
     store.upsert({ ...info('1'), status: '회의 중', presence: 'focus' })

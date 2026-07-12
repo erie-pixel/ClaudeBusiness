@@ -21,6 +21,8 @@ export interface NetState {
   ny: number
   pose: Pose
   facing: 1 | -1
+  /** 캐릭터가 엣지패널 방(집)에 들어가 있음 — 상대 화면에서는 방 안에 표시 */
+  inRoom?: boolean
 }
 
 export interface NetCallbacks {
@@ -33,6 +35,9 @@ export interface NetCallbacks {
   onPeerPresence(id: string, mode: PresenceMode): void
   onChat(id: string, name: string, text: string): void
   onEmote(id: string, sym: string): void
+  /** 방 벽면 그림판 — 획 수신/전체 지우기 */
+  onDraw(id: string, segs: number[][]): void
+  onDrawClear(id: string): void
   /** 화면 엿보기 시그널 (요청/승인/거절/철회/시청 상태/WebRTC) */
   onPeek(type: PeekSignalType, from: string, name: string, watching?: boolean, payload?: unknown): void
   onError(code: string): void
@@ -95,10 +100,16 @@ export class NetClient {
           this.cb.onPeerLeave(msg.id as string)
           break
         case 'state': {
-          const { id, nx, ny, pose, facing } = msg as unknown as NetState & { id: string }
-          this.cb.onPeerState(id, { nx, ny, pose, facing })
+          const { id, nx, ny, pose, facing, inRoom } = msg as unknown as NetState & { id: string }
+          this.cb.onPeerState(id, { nx, ny, pose, facing, inRoom: inRoom === true })
           break
         }
+        case 'draw':
+          this.cb.onDraw(msg.id as string, (msg.segs as number[][]) ?? [])
+          break
+        case 'draw-clear':
+          this.cb.onDrawClear(msg.id as string)
+          break
         case 'peer-rename':
           this.cb.onPeerRename(msg.id as string, msg.name as string)
           break
@@ -168,6 +179,14 @@ export class NetClient {
 
   sendPresence(mode: PresenceMode) {
     this.send({ t: 'presence', mode })
+  }
+
+  sendDraw(segs: number[][]) {
+    this.send({ t: 'draw', segs })
+  }
+
+  sendDrawClear() {
+    this.send({ t: 'draw-clear' })
   }
 
   sendPeek(type: PeekSignalType, to: string, extra?: { watching?: boolean; payload?: unknown }) {
