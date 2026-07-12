@@ -4,7 +4,7 @@
 
 import type { Look } from '../engine/sprite'
 import type { Pose } from '../engine/character'
-import type { NetPeerInfo, NetState } from './client'
+import type { NetPeerInfo, NetState, PresenceMode } from './client'
 
 export interface Peer {
   id: string
@@ -20,6 +20,10 @@ export interface Peer {
   facing: 1 | -1
   /** 첫 상태 수신 전에는 그리지 않는다 */
   hasState: boolean
+  /** 상태 메시지 (SNS 한 줄 — 이름표 아래 표시) */
+  status: string
+  /** 프레즌스 (이름표 옆 점 색) */
+  presence: PresenceMode
 }
 
 const LERP_RATE = 10 // 초당 목표 접근 비율 계수
@@ -44,9 +48,13 @@ export class PeerStore {
       pose: 'idle',
       facing: 1,
       hasState: false,
+      status: '',
+      presence: 'online',
     }
     peer.name = info.name
     peer.look = info.look
+    peer.status = info.status ?? ''
+    peer.presence = info.presence ?? 'online'
     if (info.state) this.applyState(peer, info.state, true)
     this.peers.set(info.id, peer)
   }
@@ -58,6 +66,16 @@ export class PeerStore {
   rename(id: string, name: string) {
     const peer = this.peers.get(id)
     if (peer) peer.name = name
+  }
+
+  setStatus(id: string, status: string) {
+    const peer = this.peers.get(id)
+    if (peer) peer.status = status
+  }
+
+  setPresence(id: string, presence: PresenceMode) {
+    const peer = this.peers.get(id)
+    if (peer) peer.presence = presence
   }
 
   updateState(id: string, state: NetState) {

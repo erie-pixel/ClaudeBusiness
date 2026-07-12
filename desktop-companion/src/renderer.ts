@@ -170,6 +170,7 @@ const char = new Character(canvas.width / 2, canvas.height * 0.7)
 // 트레이/설정 반영 (시작 시 + 변경 시)
 let hourlyChime = false
 let onboardingStarted = false
+let autoRejoinTried = false
 bridge.onSettings((s) => {
   applyScale(s.scale)
   char.applyActivity(s.activity)
@@ -180,6 +181,20 @@ bridge.onSettings((s) => {
   playerName = s.playerName
   serverUrl = s.serverUrl
   hourlyChime = s.hourlyChime
+  statusMsg = s.statusMsg
+
+  // 마지막 방 자동 재접속 — 방을 '상주 공간'처럼 (명시적으로 나가기 전까지 유지)
+  if (s.lastRoom && !autoRejoinTried && !roomCode) {
+    autoRejoinTried = true
+    const room = s.lastRoom
+    setTimeout(() => {
+      if (roomCode) return
+      activeUrl = room.url
+      netNotice = '이전 방에 다시 접속 중…'
+      autoRejoining = true
+      net.connectAnd(room.url, room.code, playerName, look)
+    }, 800)
+  }
 
   // 첫 실행 온보딩 — 캐릭터가 인사하고 옷장을 열어 꾸미기부터 안내한다.
   // (기획서 §5 Phase 6 "첫 실행 캐릭터 메이커"의 경량판)
@@ -202,8 +217,11 @@ bridge.onSettings((s) => {
 
 let playerName = '친구'
 let serverUrl = 'ws://127.0.0.1:8787'
+let statusMsg = '' // 상태 메시지 (SNS 한 줄)
 let roomCode: string | null = null
 let netNotice = '' // mp 패널에 표시할 상태/오류 메시지
+/** 시작 시 마지막 방 자동 재접속 시도 중인가 (실패하면 조용히 lastRoom 해제) */
+let autoRejoining = false
 const peers = new PeerStore()
 const roomLog: Array<{ name: string; text: string; ts: number }> = []
 /** 친구 캐릭터의 이모트 심볼 (머리 위 표시) */
@@ -243,9 +261,16 @@ const net = new NetClient({
     netNotice = ''
     reconnect.code = null
     reconnect.attempts = 0
+    autoRejoining = false
     peers.reset()
     for (const info of infos) peers.upsert(info)
     char.messages.push('!')
+    // 내 상태 메시지/프레즌스를 방에 알린다
+    if (statusMsg) net.sendStatus(statusMsg)
+    net.sendPresence(currentPresence())
+    // 참여한 방 기억 — 다음 실행 시 자동 재접속 (호스트는 재시작 시 코드가
+    // 바뀌므로 제외, 명시적으로 나가면 해제)
+    bridge.saveLastRoom(hosting ? null : { code: room, url: activeUrl })
     refreshMpPanel()
   },
   onPeerJoin(info: NetPeerInfo) {
@@ -268,6 +293,14 @@ const net = new NetClient({
   },
   onPeerRename(id, name) {
     peers.rename(id, name)
+    refreshMpPanel()
+  },
+  onPeerStatus(id, text) {
+    peers.setStatus(id, text)
+    refreshMpPanel()
+  },
+  onPeerPresence(id, mode) {
+    peers.setPresence(id, mode)
     refreshMpPanel()
   },
   onChat(id, name, text) {
@@ -298,6 +331,12 @@ const net = new NetClient({
       // 방이 유예 기간을 넘겨 사라짐 — 재접속 포기
       reconnect.code = null
       netNotice = '방이 사라졌어요 — 새로 만들어 주세요'
+    }
+    if (autoRejoining) {
+      // 시작 시 자동 재접속 실패 — 기억해둔 방을 조용히 잊는다
+      autoRejoining = false
+      netNotice = ''
+      bridge.saveLastRoom(null)
     }
     refreshMpPanel()
   },
@@ -336,6 +375,7 @@ function leaveRoom() {
   clearBubbles()
   peerEmotes.clear()
   cleanupAllPeeks()
+  bridge.saveLastRoom(null) // 명시적으로 나감 — 다음 실행에 자동 재접속 안 함
   refreshMpPanel()
 }
 
@@ -374,6 +414,24 @@ function maybeSendState(dt: number) {
   if (key === lastSentState) return
   lastSentState = key
   net.sendState(state)
+}
+
+// 프레즌스 (SNS) — 집중 타이머 중/자리 비움/온라인을 자동 감지해 방에 알린다.
+// Discord의 온라인 상태처럼 "옆자리 감각"을 만드는 ambient 신호.
+let lastSentPresence: 'online' | 'focus' | 'away' | '' = ''
+
+function currentPresence(): 'online' | 'focus' | 'away' {
+  if (focus) return 'focus'
+  if (watcherIdleSec >= 90) return 'away'
+  return 'online'
+}
+
+function maybeSendPresence() {
+  if (!roomCode || !net.connected) return
+  const mode = currentPresence()
+  if (mode === lastSentPresence) return
+  lastSentPresence = mode
+  net.sendPresence(mode)
 }
 
 // 근접 인사 — 옆에 친구 캐릭터가 오면 가끔 반가워함
@@ -1261,6 +1319,17 @@ function buildMp() {
   nameRow.appendChild(nameSaveBtn)
   mp.appendChild(nameRow)
 
+  // 상태 메시지 — "회의 중", "점심 먹는 중" 같은 한 줄 (친구 캐릭터 이름표 아래 표시)
+  const stRow = el('div', 'w-row')
+  stRow.appendChild(el('span', '', '상태'))
+  const stInput = document.createElement('input')
+  stInput.className = 'w-input'
+  stInput.maxLength = 40
+  stInput.placeholder = '상태 메시지 (예: 회의 중)'
+  stInput.value = statusMsg
+  stRow.appendChild(stInput)
+  mp.appendChild(stRow)
+
   const svRow = el('div', 'w-row')
   svRow.appendChild(el('span', '', '참여 서버'))
   const svInput = document.createElement('input')
@@ -1269,15 +1338,25 @@ function buildMp() {
   svRow.appendChild(svInput)
   mp.appendChild(svRow)
 
-  // 이름은 방에 있는 동안에도 바꿀 수 있다 - 바뀌면 같은 방의 다른 사람에게도 바로 알린다.
+  // 이름/상태는 방에 있는 동안에도 바꿀 수 있다 - 바뀌면 같은 방의 다른 사람에게도 바로 알린다.
   const saveMpLocal = () => {
     const newName = nameInput.value.trim() || '친구'
     const renamed = newName !== playerName
+    const newStatus = stInput.value.trim().slice(0, 40)
+    const statusChanged = newStatus !== statusMsg
     playerName = newName
+    statusMsg = newStatus
     serverUrl = svInput.value.trim() || serverUrl
-    bridge.saveMp({ playerName, serverUrl })
+    bridge.saveMp({ playerName, serverUrl, statusMsg })
     if (renamed && roomCode && net.connected) net.sendRename(playerName)
+    if (statusChanged && roomCode && net.connected) net.sendStatus(statusMsg)
   }
+  stInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      saveMpLocal()
+      refreshMpPanel()
+    }
+  })
   nameSaveBtn.addEventListener('click', () => {
     saveMpLocal()
     refreshMpPanel()
@@ -1351,8 +1430,20 @@ function buildMp() {
       mp.appendChild(el('div', 'w-note', '이 코드를 친구에게 알려주면 참여할 수 있어요'))
     }
 
-    const names = [playerName + ' (나)', ...[...peers.peers.values()].map((p) => p.name)]
-    mp.appendChild(el('div', 'w-note', '함께 있는 사람: ' + names.join(', ')))
+    // 함께 있는 사람 — 프레즌스(●)와 상태 메시지를 함께 (Discord 멤버 목록 느낌)
+    const PRESENCE_LABEL: Record<string, string> = { focus: '집중 중', away: '자리 비움', online: '' }
+    const meLine = el('div', 'w-note')
+    meLine.textContent = `● ${playerName} (나)${statusMsg ? ' — ' + statusMsg : ''}`
+    meLine.style.color = currentPresence() === 'focus' ? '#ffd76a' : currentPresence() === 'away' ? '#666d8c' : '#7ec46a'
+    mp.appendChild(el('div', 'w-note', '함께 있는 사람:'))
+    mp.appendChild(meLine)
+    for (const p of peers.peers.values()) {
+      const line = el('div', 'w-note')
+      const presence = PRESENCE_LABEL[p.presence] ? ` [${PRESENCE_LABEL[p.presence]}]` : ''
+      line.textContent = `● ${p.name}${presence}${p.status ? ' — ' + p.status : ''}`
+      line.style.color = p.presence === 'focus' ? '#ffd76a' : p.presence === 'away' ? '#666d8c' : '#7ec46a'
+      mp.appendChild(line)
+    }
 
     const leaveBtn = el('button', 'w-btn', '방 나가기')
     leaveBtn.addEventListener('click', () => {
@@ -2010,6 +2101,20 @@ function drawPeer(peer: Peer) {
   const nameY = Math.round(peer.y + 12)
   ctx.strokeText(peer.name, nameX, nameY)
   ctx.fillText(peer.name, nameX, nameY)
+  // 프레즌스 점 — 이름 왼쪽 (집중=노랑, 자리비움=회색, 온라인=초록)
+  const dotColor = peer.presence === 'focus' ? '#ffd76a' : peer.presence === 'away' ? '#666d8c' : '#7ec46a'
+  const nameW = ctx.measureText(peer.name).width
+  ctx.fillStyle = dotColor
+  ctx.fillRect(nameX - nameW / 2 - 8, nameY - 7, 5, 5)
+  // 상태 메시지 — 이름 아래 한 줄, 은은하게
+  if (peer.status) {
+    ctx.font = '9px monospace'
+    ctx.lineWidth = 2
+    const st = peer.status.length > 24 ? peer.status.slice(0, 23) + '…' : peer.status
+    ctx.strokeText(st, nameX, nameY + 11)
+    ctx.fillStyle = '#aab0cc'
+    ctx.fillText(st, nameX, nameY + 11)
+  }
   ctx.restore()
 }
 
@@ -2153,6 +2258,7 @@ function loop(now: number) {
   if (roomCode) {
     peers.tick(dt, canvas.width, canvas.height)
     maybeSendState(dt)
+    maybeSendPresence()
     greetCooldown -= dt
     if (greetCooldown <= 0) {
       greetCooldown = 5

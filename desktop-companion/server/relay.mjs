@@ -12,7 +12,7 @@ const CHAT_WINDOW_MS = 3000
 export function startRelay({ port = 8787 } = {}) {
   const wss = new WebSocketServer({ port })
   const rooms = new Rooms(MAX_ROOM)
-  /** @type {Map<string, {ws: any, name: string, look: any, lastState: any, chatTimes: number[], emoteTimes: number[]}>} */
+  /** @type {Map<string, {ws: any, name: string, look: any, lastState: any, status: string, presence: string, chatTimes: number[], emoteTimes: number[], drawTimes: number[]}>} */
   const clients = new Map()
   let seq = 1
 
@@ -32,7 +32,14 @@ export function startRelay({ port = 8787 } = {}) {
 
   const peerInfo = (id) => {
     const c = clients.get(id)
-    return { id, name: c?.name ?? '?', look: c?.look ?? null, state: c?.lastState ?? null }
+    return {
+      id,
+      name: c?.name ?? '?',
+      look: c?.look ?? null,
+      state: c?.lastState ?? null,
+      status: c?.status ?? '',
+      presence: c?.presence ?? 'online',
+    }
   }
 
   function handleLeave(id) {
@@ -46,7 +53,17 @@ export function startRelay({ port = 8787 } = {}) {
 
   wss.on('connection', (ws) => {
     const id = String(seq++)
-    clients.set(id, { ws, name: '?', look: null, lastState: null, chatTimes: [], emoteTimes: [] })
+    clients.set(id, {
+      ws,
+      name: '?',
+      look: null,
+      lastState: null,
+      status: '',
+      presence: 'online',
+      chatTimes: [],
+      emoteTimes: [],
+      drawTimes: [],
+    })
 
     ws.on('message', (data) => {
       let msg
@@ -88,6 +105,22 @@ export function startRelay({ port = 8787 } = {}) {
           if (!name || name === me.name) return
           me.name = name
           toPeers(id, { t: 'peer-rename', id, name })
+          break
+        }
+        // 상태 메시지 (SNS 프레즌스) — "회의 중", "점심" 같은 한 줄
+        case 'status': {
+          const text = String(msg.text ?? '').slice(0, 40)
+          if (text === me.status) return
+          me.status = text
+          toPeers(id, { t: 'peer-status', id, text })
+          break
+        }
+        // 프레즌스 모드 — 집중 타이머 중 / 자리 비움 / 온라인 (자동 감지)
+        case 'presence': {
+          const mode = String(msg.mode ?? '')
+          if (!['online', 'focus', 'away'].includes(mode) || mode === me.presence) return
+          me.presence = mode
+          toPeers(id, { t: 'peer-presence', id, mode })
           break
         }
         case 'state': {

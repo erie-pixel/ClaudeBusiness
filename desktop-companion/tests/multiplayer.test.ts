@@ -116,4 +116,19 @@ describe('원격 캐릭터 보간 (PeerStore)', () => {
     expect(store.near(510, 510, 30)).not.toBeNull()
     expect(store.near(700, 700, 30)).toBeNull()
   })
+
+  it('상태 메시지/프레즌스는 참여 시 초기값을 받고 이후 갱신된다 (SNS)', () => {
+    const store = new PeerStore()
+    store.upsert({ ...info('1'), status: '회의 중', presence: 'focus' })
+    expect(store.peers.get('1')!.status).toBe('회의 중')
+    expect(store.peers.get('1')!.presence).toBe('focus')
+    store.setStatus('1', '점심')
+    store.setPresence('1', 'away')
+    expect(store.peers.get('1')!.status).toBe('점심')
+    expect(store.peers.get('1')!.presence).toBe('away')
+    // 정보가 없는 구버전 피어는 기본값
+    store.upsert(info('2'))
+    expect(store.peers.get('2')!.status).toBe('')
+    expect(store.peers.get('2')!.presence).toBe('online')
+  })
 })

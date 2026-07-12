@@ -46,6 +46,8 @@ let settings: AppSettings = {
   serverUrl: 'ws://127.0.0.1:8787',
   hourlyChime: false,
   onboarded: false,
+  statusMsg: '',
+  lastRoom: null,
 }
 
 function pushSettings() {
@@ -59,6 +61,8 @@ function pushSettings() {
     serverUrl: settings.serverUrl,
     hourlyChime: settings.hourlyChime,
     onboarded: settings.onboarded,
+    statusMsg: settings.statusMsg,
+    lastRoom: settings.lastRoom,
   })
 }
 
@@ -378,10 +382,20 @@ ipcMain.on('open-mods-folder', () => {
   shell.openPath(modsDir())
 })
 
-ipcMain.on('save-mp', (_e, mp: { playerName: string; serverUrl: string }) => {
+ipcMain.on('save-mp', (_e, mp: { playerName: string; serverUrl: string; statusMsg: string }) => {
   updateSettings({
     playerName: String(mp.playerName ?? '친구').slice(0, 20),
     serverUrl: String(mp.serverUrl ?? ''),
+    statusMsg: String(mp.statusMsg ?? '').slice(0, 40),
+  })
+})
+
+ipcMain.on('save-last-room', (_e, room: { code: string; url: string } | null) => {
+  updateSettings({
+    lastRoom:
+      room && typeof room.code === 'string' && typeof room.url === 'string'
+        ? { code: room.code.slice(0, 6), url: room.url.slice(0, 200) }
+        : null,
   })
 })
 

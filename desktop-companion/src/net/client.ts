@@ -4,11 +4,16 @@
 import type { Look } from '../engine/sprite'
 import type { Pose } from '../engine/character'
 
+export type PresenceMode = 'online' | 'focus' | 'away'
+
 export interface NetPeerInfo {
   id: string
   name: string
   look: Look | null
   state: NetState | null
+  /** 상태 메시지 (SNS 한 줄) */
+  status?: string
+  presence?: PresenceMode
 }
 
 export interface NetState {
@@ -24,6 +29,8 @@ export interface NetCallbacks {
   onPeerLeave(id: string): void
   onPeerState(id: string, state: NetState): void
   onPeerRename(id: string, name: string): void
+  onPeerStatus(id: string, text: string): void
+  onPeerPresence(id: string, mode: PresenceMode): void
   onChat(id: string, name: string, text: string): void
   onEmote(id: string, sym: string): void
   /** 화면 엿보기 시그널 (요청/승인/거절/철회/시청 상태/WebRTC) */
@@ -95,6 +102,12 @@ export class NetClient {
         case 'peer-rename':
           this.cb.onPeerRename(msg.id as string, msg.name as string)
           break
+        case 'peer-status':
+          this.cb.onPeerStatus(msg.id as string, (msg.text as string) ?? '')
+          break
+        case 'peer-presence':
+          this.cb.onPeerPresence(msg.id as string, msg.mode as PresenceMode)
+          break
         case 'chat':
           this.cb.onChat(msg.id as string, msg.name as string, msg.text as string)
           break
@@ -147,6 +160,14 @@ export class NetClient {
 
   sendRename(name: string) {
     this.send({ t: 'rename', name })
+  }
+
+  sendStatus(text: string) {
+    this.send({ t: 'status', text })
+  }
+
+  sendPresence(mode: PresenceMode) {
+    this.send({ t: 'presence', mode })
   }
 
   sendPeek(type: PeekSignalType, to: string, extra?: { watching?: boolean; payload?: unknown }) {

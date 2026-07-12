@@ -26,6 +26,8 @@ export interface RendererSettings {
   serverUrl: string
   hourlyChime: boolean
   onboarded: boolean
+  statusMsg: string
+  lastRoom: { code: string; url: string } | null
 }
 
 export interface CompanionBridge {
@@ -45,7 +47,8 @@ export interface CompanionBridge {
   saveAlbum(data: unknown): void
   saveTodos(data: unknown): void
   saveOnboarded(): void
-  saveMp(mp: { playerName: string; serverUrl: string }): void
+  saveMp(mp: { playerName: string; serverUrl: string; statusMsg: string }): void
+  saveLastRoom(room: { code: string; url: string } | null): void
   ensureRelay(): Promise<{ ok: boolean; port?: number; ips?: string[]; error?: string }>
   hideWindow(): void
   quitApp(): void
@@ -83,6 +86,7 @@ const bridge: CompanionBridge = {
   saveTodos: (data) => ipcRenderer.send('save-todos', data),
   saveOnboarded: () => ipcRenderer.send('save-onboarded'),
   saveMp: (mp) => ipcRenderer.send('save-mp', mp),
+  saveLastRoom: (room) => ipcRenderer.send('save-last-room', room),
   ensureRelay: () => ipcRenderer.invoke('ensure-relay'),
   setInteractive: (v) => ipcRenderer.send('set-interactive', v),
   setPollRate: (active) => ipcRenderer.send('set-poll-rate', active),

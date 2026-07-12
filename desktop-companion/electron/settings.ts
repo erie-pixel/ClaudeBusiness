@@ -47,6 +47,10 @@ export interface AppSettings {
   hourlyChime: boolean
   /** 첫 실행 온보딩(옷장 자동 열기 + 안내)을 이미 마쳤는가 */
   onboarded: boolean
+  /** 상태 메시지 (SNS 한 줄 — 친구에게 표시) */
+  statusMsg: string
+  /** 마지막으로 참여했던 방 — 시작 시 자동 재접속 (명시적으로 나가면 해제) */
+  lastRoom: { code: string; url: string } | null
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -69,6 +73,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   serverUrl: 'ws://127.0.0.1:8787',
   hourlyChime: false,
   onboarded: false,
+  statusMsg: '',
+  lastRoom: null,
 }
 
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json')
