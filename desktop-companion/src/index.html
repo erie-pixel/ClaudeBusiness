@@ -345,6 +345,131 @@
         background: #5b8bd9;
         color: #fff;
       }
+      /* 엣지패널 방 v2 — 2.5D 거실 */
+      #peerhandles {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      .edgehandle-peer {
+        position: absolute;
+        pointer-events: auto;
+        width: 12px;
+        height: 44px;
+        background: #2b3a2e;
+        border: 2px solid #5f9e54;
+        opacity: 0.6;
+        cursor: pointer;
+        z-index: 5;
+        color: #93c47d;
+        font-family: 'Courier New', monospace;
+        font-size: 9px;
+        font-weight: bold;
+        text-align: center;
+        line-height: 44px;
+        overflow: hidden;
+      }
+      .edgehandle-peer:hover {
+        opacity: 1;
+      }
+      #room .r-scene-canvas {
+        display: block;
+        border: 2px solid #454a66;
+        image-rendering: pixelated;
+        margin-bottom: 6px;
+      }
+      #room .r-scene-canvas.editing {
+        border-color: #ffd76a;
+        cursor: grab;
+      }
+      #room .r-btns {
+        display: flex;
+        gap: 5px;
+        flex-wrap: wrap;
+        margin-bottom: 6px;
+      }
+      #room .r-furnrow {
+        display: flex;
+        gap: 4px;
+        flex-wrap: wrap;
+        margin-bottom: 6px;
+      }
+      #room .r-furnrow .w-btn {
+        font-size: 11px;
+        padding: 3px 6px;
+      }
+      .w-btn.r-active {
+        background: #5b8bd9;
+        color: #fff;
+      }
+      /* 그림판/보드 팝업 */
+      #wb,
+      #board {
+        display: none;
+        position: absolute;
+        min-width: 240px;
+        max-width: 300px;
+        background: #1d1f2b;
+        border: 3px solid #454a66;
+        box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        font-weight: bold;
+        color: #e8e9f5;
+        padding: 8px;
+        image-rendering: pixelated;
+        z-index: 7;
+      }
+      #wb .w-title,
+      #board .w-title {
+        font-size: 13px;
+        margin-bottom: 4px;
+        color: #aab0cc;
+      }
+      #board .b-link {
+        flex: 1;
+        color: #9ad0ff;
+        cursor: pointer;
+        font-weight: normal;
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-decoration: underline;
+      }
+      #board .b-link:hover {
+        color: #cfe7ff;
+      }
+      #board .t-list {
+        max-height: 170px;
+        overflow-y: auto;
+        margin: 6px 0;
+      }
+      #board .t-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 4px;
+      }
+      #board .t-text {
+        flex: 1;
+        font-weight: normal;
+        font-size: 12px;
+        word-break: break-all;
+      }
+      #board .t-del,
+      #wb .t-del {
+        background: none;
+        border: none;
+        color: #666d8c;
+        font-family: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        padding: 0 2px;
+      }
+      #board .t-del:hover {
+        color: #ff9a9a;
+      }
       /* 할일 목록 — 옷장과 같은 픽셀 스타일 */
       #todo {
         display: none;
@@ -656,7 +781,10 @@
     <div id="album"></div>
     <div id="todo"></div>
     <div id="edgehandle"><div class="grip"></div></div>
+    <div id="peerhandles"></div>
     <div id="room"></div>
+    <div id="wb"></div>
+    <div id="board"></div>
     <div id="mp"></div>
     <div id="history"></div>
     <div id="chat"><input type="text" maxlength="200" placeholder="메시지 입력 후 Enter" /></div>

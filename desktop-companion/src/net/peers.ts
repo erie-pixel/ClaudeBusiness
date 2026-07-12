@@ -26,6 +26,8 @@ export interface Peer {
   presence: PresenceMode
   /** 방(집)에 들어가 있음 — 바탕화면 대신 방 패널에 표시 */
   inRoom: boolean
+  /** 이 친구의 방 정보 (크기/테마/가구/보드 — 원본 그대로, 사용 시 정규화) */
+  roomInfo: unknown
 }
 
 const LERP_RATE = 10 // 초당 목표 접근 비율 계수
@@ -53,11 +55,13 @@ export class PeerStore {
       status: '',
       presence: 'online',
       inRoom: false,
+      roomInfo: null,
     }
     peer.name = info.name
     peer.look = info.look
     peer.status = info.status ?? ''
     peer.presence = info.presence ?? 'online'
+    peer.roomInfo = info.roomInfo ?? null
     if (info.state) this.applyState(peer, info.state, true)
     this.peers.set(info.id, peer)
   }
@@ -79,6 +83,11 @@ export class PeerStore {
   setPresence(id: string, presence: PresenceMode) {
     const peer = this.peers.get(id)
     if (peer) peer.presence = presence
+  }
+
+  setRoomInfo(id: string, info: unknown) {
+    const peer = this.peers.get(id)
+    if (peer) peer.roomInfo = info
   }
 
   updateState(id: string, state: NetState) {

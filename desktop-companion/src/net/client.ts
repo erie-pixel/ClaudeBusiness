@@ -14,6 +14,8 @@ export interface NetPeerInfo {
   /** 상태 메시지 (SNS 한 줄) */
   status?: string
   presence?: PresenceMode
+  /** 방(엣지패널) 정보 — 크기/테마/가구/보드 (수신 측이 normalizeRoomData로 검증) */
+  roomInfo?: unknown
 }
 
 export interface NetState {
@@ -33,6 +35,7 @@ export interface NetCallbacks {
   onPeerRename(id: string, name: string): void
   onPeerStatus(id: string, text: string): void
   onPeerPresence(id: string, mode: PresenceMode): void
+  onPeerRoomInfo(id: string, info: unknown): void
   onChat(id: string, name: string, text: string): void
   onEmote(id: string, sym: string): void
   /** 방 벽면 그림판 — 획 수신/전체 지우기 */
@@ -119,6 +122,9 @@ export class NetClient {
         case 'peer-presence':
           this.cb.onPeerPresence(msg.id as string, msg.mode as PresenceMode)
           break
+        case 'peer-room-info':
+          this.cb.onPeerRoomInfo(msg.id as string, msg.info)
+          break
         case 'chat':
           this.cb.onChat(msg.id as string, msg.name as string, msg.text as string)
           break
@@ -179,6 +185,10 @@ export class NetClient {
 
   sendPresence(mode: PresenceMode) {
     this.send({ t: 'presence', mode })
+  }
+
+  sendRoomInfo(info: unknown) {
+    this.send({ t: 'room-info', info })
   }
 
   sendDraw(segs: number[][]) {

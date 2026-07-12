@@ -39,6 +39,7 @@ export function startRelay({ port = 8787 } = {}) {
       state: c?.lastState ?? null,
       status: c?.status ?? '',
       presence: c?.presence ?? 'online',
+      roomInfo: c?.roomInfo ?? null,
     }
   }
 
@@ -60,6 +61,7 @@ export function startRelay({ port = 8787 } = {}) {
       lastState: null,
       status: '',
       presence: 'online',
+      roomInfo: null,
       chatTimes: [],
       emoteTimes: [],
       drawTimes: [],
@@ -113,6 +115,20 @@ export function startRelay({ port = 8787 } = {}) {
           if (text === me.status) return
           me.status = text
           toPeers(id, { t: 'peer-status', id, text })
+          break
+        }
+        // 내 방(엣지패널) 정보 — 크기/테마/가구/보드. 친구 화면에서 내 방이 재현된다.
+        // 데이터(JSON)만 저장·중계, 크기 상한으로 남용 방지
+        case 'room-info': {
+          const info = msg.info
+          if (typeof info !== 'object' || info === null) return
+          try {
+            if (JSON.stringify(info).length > 8000) return
+          } catch {
+            return
+          }
+          me.roomInfo = info
+          toPeers(id, { t: 'peer-room-info', id, info })
           break
         }
         // 프레즌스 모드 — 집중 타이머 중 / 자리 비움 / 온라인 (자동 감지)
